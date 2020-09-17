@@ -464,7 +464,7 @@ struct Function {
   }
 };
 
-void jump(auto &operations, const std::ptrdiff_t distance) {
+constexpr void jump(auto &operations, const std::ptrdiff_t distance) {
   operations.pc = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(operations.pc) + distance);
 }
 
