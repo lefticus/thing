@@ -6,6 +6,6 @@ target_link_libraries(
           project_warnings
           CONAN_PKG::docopt.cpp
           CONAN_PKG::fmt
-          CONAN_PKG::spdlog)
+          CONAN_PKG::spdlog
+          CONAN_PKG::ctre)
 target_include_directories(intro PRIVATE "${CMAKE_SOURCE_DIR}/include")
-

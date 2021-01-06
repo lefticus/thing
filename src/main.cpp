@@ -6,27 +6,25 @@
 
 #include <docopt/docopt.h>
 
-#include <iostream>
 
 #include <thing.hpp>
+#include <parser.hpp>
+#include <algorithms.hpp>
+
 
 static constexpr auto USAGE =
-  R"(Naval Fate.
+  R"(Parser Test.
 
     Usage:
-          naval_fate ship new <name>...
-          naval_fate ship <name> move <x> <y> [--speed=<kn>]
-          naval_fate ship shoot <x> <y>
-          naval_fate mine (set|remove) <x> <y> [--moored | --drifting]
-          naval_fate (-h | --help)
-          naval_fate --version
+          parser_test [options]
+
  Options:
           -h --help     Show this screen.
           --version     Show version.
-          --speed=<kn>  Speed in knots [default: 10].
-          --moored      Moored (anchored) mine.
-          --drifting    Drifting mine.
 )";
+
+
+
 
 void print(std::uint64_t val0) { std::cout << "value0 is: " << val0 << '\n'; }
 
@@ -110,15 +108,45 @@ auto run_summation()
   }
 }
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] const char **argv)
-{
-  //std::map<std::string, docopt::value> args = docopt::docopt(USAGE,
-  //  { std::next(argv), std::next(argv, argc) },
-  //  true,// show help if requested
-  //  "Naval Fate 2.0");// version string
 
-  //Use the default logger (stdout, multi-threaded, colored)
-  //spdlog::info("Hello, {}!", "World");
+int main(int argc, const char **argv)
+{
+  const auto args = docopt::docopt(USAGE,
+    { std::next(argv), std::next(argv, argc) },
+    true,// show help if requested
+    "Parser Test 0.0");// version string
+
+//  for (auto const &arg : args) {
+//    fmt::print("Command line arg: '{}': '{}'\n", arg.first, arg.second);
+//  }
+
+
+    constexpr std::string_view str{"3 * (2+-4)^4 + 3! - 1a"};
+
+  auto string_to_parse = str;
+
+  parser_test::Parser parser;
+  while (!string_to_parse.empty()) {
+    auto parsed = parser.next_token(string_to_parse);
+    if (parsed.type == parser_test::Parser::Type::unknown) {
+      const auto [line, location] = parser_test::count_to_last(str.begin(), parsed.remainder.begin(), '\n');
+      // skip last matched newline, and find next newline after
+      const auto errored_line = std::string_view{std::next(location), std::find(std::next(location), parsed.remainder.end(), '\n')};
+      // count column from location to beginning of unmatched string
+      const auto column = std::distance(std::next(location), parsed.remainder.begin());
+
+      std::cout << fmt::format("Error parsing string ({},{})\n\n", line+1, column+1);
+      std::cout << errored_line;
+      std::cout << fmt::format("\n{:>{}}\n\n", '^', column+1);
+      return EXIT_FAILURE;
+    }
+    std::cout << '\'' << parsed.match << "' '" << parsed.remainder << "'\n";
+    string_to_parse = parsed.remainder;
+  }
+
+  fmt::print(" {} = {} \n", str, parser.parse(str));
+
+
 
   run_summation();
 

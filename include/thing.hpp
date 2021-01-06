@@ -184,7 +184,7 @@ constexpr auto use_safe_comparison =
     is_integral_arithmetic<T> &&is_integral_arithmetic<U>;
 
 template <typename T, typename U>
-constexpr auto is_desireable_op =
+constexpr auto is_desirable_op =
     are_both_float_or_not<T, U> &&is_same_integral_signedness<T, U>;
 
 template <typename T>
@@ -303,25 +303,25 @@ constexpr bool execBinaryOp(const std::uint64_t arity,
 
     switch (op) {
     case BinaryOps::Division:
-      if constexpr (requires { lhs / rhs; } && is_desireable_op<LHS, RHS>) {
+      if constexpr (requires { lhs / rhs; } && is_desirable_op<LHS, RHS>) {
         set(stack, 4, lhs / rhs);
         return true;
       }
       break;
     case BinaryOps::Addition:
-      if constexpr (requires { lhs + rhs; } && is_desireable_op<LHS, RHS>) {
+      if constexpr (requires { lhs + rhs; } && is_desirable_op<LHS, RHS>) {
         set(stack, 4, lhs + rhs);
         return true;
       }
       break;
     case BinaryOps::Subtraction:
-      if constexpr (requires { lhs - rhs; } && is_desireable_op<LHS, RHS>) {
+      if constexpr (requires { lhs - rhs; } && is_desirable_op<LHS, RHS>) {
         set(stack, 4, lhs - rhs);
         return true;
       }
       break;
     case BinaryOps::Multiplication:
-      if constexpr (requires { lhs *rhs; } && is_desireable_op<LHS, RHS>) {
+      if constexpr (requires { lhs *rhs; } && is_desirable_op<LHS, RHS>) {
         set(stack, 4, lhs * rhs);
         return true;
       }
@@ -331,7 +331,7 @@ constexpr bool execBinaryOp(const std::uint64_t arity,
         if constexpr (use_safe_comparison<LHS, RHS>) {
           set(stack, 4, std::cmp_equal(lhs, rhs));
           return true;
-        } else if constexpr (is_desireable_op<LHS, RHS>) {
+        } else if constexpr (is_desirable_op<LHS, RHS>) {
           set(stack, 4, lhs == rhs);
           return true;
         }
@@ -342,7 +342,7 @@ constexpr bool execBinaryOp(const std::uint64_t arity,
         if constexpr (use_safe_comparison<LHS, RHS>) {
           set(stack, 4, std::cmp_greater(lhs, rhs));
           return true;
-        } else if constexpr (is_desireable_op<LHS, RHS>) {
+        } else if constexpr (is_desirable_op<LHS, RHS>) {
           set(stack, 4, lhs > rhs);
           return true;
         }
@@ -353,7 +353,7 @@ constexpr bool execBinaryOp(const std::uint64_t arity,
         if constexpr (use_safe_comparison<LHS, RHS>) {
           set(stack, 4, std::cmp_less(lhs, rhs));
           return true;
-        } else if constexpr (is_desireable_op<LHS, RHS>) {
+        } else if constexpr (is_desirable_op<LHS, RHS>) {
           set(stack, 4, lhs < rhs);
           return true;
         }
@@ -376,7 +376,7 @@ constexpr bool execBinaryOp(const std::uint64_t arity,
         if constexpr (use_safe_comparison<LHS, RHS>) {
           set(stack, 4, std::cmp_less_equal(lhs, rhs));
           return true;
-        } else if constexpr (is_desireable_op<LHS, RHS>) {
+        } else if constexpr (is_desirable_op<LHS, RHS>) {
           set(stack, 4, lhs <= rhs);
           return true;
         }
@@ -387,7 +387,7 @@ constexpr bool execBinaryOp(const std::uint64_t arity,
         if constexpr (use_safe_comparison<LHS, RHS>) {
           set(stack, 4, std::cmp_greater_equal(lhs, rhs));
           return true;
-        } else if constexpr (is_desireable_op<LHS, RHS>) {
+        } else if constexpr (is_desirable_op<LHS, RHS>) {
           set(stack, 4, lhs >= rhs);
           return true;
         }
@@ -398,7 +398,7 @@ constexpr bool execBinaryOp(const std::uint64_t arity,
         if constexpr (use_safe_comparison<LHS, RHS>) {
           set(stack, 4, std::cmp_not_equal(lhs, rhs));
           return true;
-        } else if constexpr (is_desireable_op<LHS, RHS>) {
+        } else if constexpr (is_desirable_op<LHS, RHS>) {
           set(stack, 4, lhs != rhs);
           return true;
         }
@@ -470,7 +470,7 @@ constexpr void jump(auto &operations, const std::ptrdiff_t distance) {
 
 struct RelativeJump {
   bool conditional = false;
-  std::ptrdiff_t distance;
+  std::ptrdiff_t distance{};
 
   constexpr void exec(auto &stack, auto &ops) const {
     if (conditional) {
