@@ -108,6 +108,14 @@ auto run_summation()
   }
 }
 
+void dump(const parser_test::Parser::parse_tree &node, const std::size_t indent=0)
+{
+  fmt::print("{}'{}'\n", std::string(indent, ' '), node.item.match);
+
+    for (const auto &child : node.children) {
+      dump(child, indent+2);
+    }
+}
 
 int main(int argc, const char **argv)
 {
@@ -121,8 +129,8 @@ int main(int argc, const char **argv)
 //  }
 
 
-    constexpr std::string_view str{"3 * (2+-4)^4 + 3! - 1a"};
-
+//    constexpr std::string_view str{"3 * (2+-4)^4 + 3! - 123.1"};
+  constexpr std::string_view str{ "auto func(x,a*(2/z+q),d,b)" };
   auto string_to_parse = str;
 
   parser_test::Parser parser;
@@ -144,8 +152,16 @@ int main(int argc, const char **argv)
     string_to_parse = parsed.remainder;
   }
 
-  fmt::print(" {} = {} \n", str, parser.parse(str));
+  //fmt::print(" {} = {} \n", str, parser.parse(str));
 
+
+  auto result = parser.parse(str);
+  dump(result);
+
+  dump(parser.parse("auto x{15}"));
+//  constexpr std::string_view str{ "auto func(x,a*(2/z+q),d,b)" };
+
+  fmt::print("\n");
 
 
   run_summation();
