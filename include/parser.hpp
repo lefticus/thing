@@ -43,11 +43,16 @@ struct Parser
     decrement,
     left_paren,
     right_paren,
+    left_brace,
+    right_brace,
+    left_bracket,
+    right_bracket,
     comma,
     assign,
     plus,
     minus,
     asterisk,
+    percent,
     slash,
     caret,
     tilde,
@@ -55,7 +60,7 @@ struct Parser
     question,
     colon,
     string,
-    qualifier,
+    keyword,
     whitespace,
     semicolon,
     end_of_file
@@ -68,12 +73,12 @@ struct Parser
     std::string_view remainder;
   };
 
-  struct parse_tree
+  struct parse_node
   {
     lex_item item;
-    std::vector<parse_tree> children;
+    std::vector<parse_node> children;
 
-    parse_tree(lex_item item_, std::initializer_list<parse_tree> children_ = {}) : item{ std::move(item_) }, children{ children_ }
+    parse_node(lex_item item_, std::initializer_list<parse_node> children_ = {}) : item{ std::move(item_) }, children{ children_ }
     {
     }
   };
@@ -87,7 +92,8 @@ struct Parser
     return expression();
   }
 
-  constexpr bool peek(const Type type) const {
+  constexpr bool peek(const Type type) const
+  {
     return token.type == type;
   }
 
@@ -97,23 +103,24 @@ struct Parser
     token = next();
   }
 
-  parse_tree nud(const lex_item &item)
+  parse_node nud(const lex_item &item)
   {
     constexpr auto prefix_precedence = static_cast<int>(Precedence::prefix);
 
     switch (item.type) {
     case Type::identifier:
-      return parse_tree{ item };
+      return parse_node{ item };
     case Type::number:
-      return parse_tree{ item };
-    case Type::qualifier:
-      return parse_tree{ item, {parse_tree{ expression(prefix_precedence)}} };
+      return parse_node{ item };
+    case Type::keyword:
+      return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
     case Type::plus:
     case Type::minus:
-      return parse_tree{ item, { parse_tree{ expression(prefix_precedence) } } };
+      return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
     case Type::left_paren: {
       const auto result = expression();
       match(Type::right_paren);
+
       return result;
     }
     default:
@@ -121,30 +128,35 @@ struct Parser
     };
   }
 
-  parse_tree led(const lex_item &item, const parse_tree &left)
+  parse_node led(const lex_item &item, const parse_node &left)
   {
     switch (item.type) {
     case Type::plus:
     case Type::minus:
     case Type::asterisk:
     case Type::slash:
-      return parse_tree{ item, { left, expression(lbp(item.type)) } };
+      return parse_node{ item, { left, expression(lbp(item.type)) } };
     case Type::bang:
-      return parse_tree{ item, { left } };
+      return parse_node{ item, { left } };
     case Type::left_paren: {
-      parse_tree func_call{ item, {left}};
+      parse_node func_call{ item, { left } };
       if (!peek(Type::right_paren)) {
         while (true) {
           func_call.children.push_back(expression());
           if (peek(Type::comma)) {
             match(Type::comma);
           } else {
-            break; // end of list
+            break;// end of list
           }
         }
       }
       match(Type::right_paren);
       return func_call;
+    }
+    case Type::left_brace: {
+      parse_node decl{ item, {left, expression()} };
+      match(Type::right_brace);
+      return decl;
     }
     case Type::caret:
       // caret, as an infix, is right-associative, so we decrease its
@@ -153,7 +165,7 @@ struct Parser
       // note that this https://eli.thegreenplace.net/2010/01/02/top-down-operator-precedence-parsing
       // example disagrees slightly, it provides a gap in precedence, where
       // the bantam example notches it down to share with other levels
-      return parse_tree{ item, { left, expression(lbp(item.type) - 1) } };
+      return parse_node{ item, { left, expression(lbp(item.type) - 1) } };
     default:
       throw std::runtime_error("Unhandled led");
     }
@@ -170,7 +182,7 @@ struct Parser
     prefix = 7,
     postfix = 8,
     call = 9,
-    qualifier = 10
+    keyword = 10
   };
 
   // this is for infix precedence values
@@ -191,24 +203,26 @@ struct Parser
         return Precedence::exponent;
       case Type::bang:
         return Precedence::postfix;
+      case Type::left_brace:
+        return Precedence::call;
       case Type::left_paren:
         return Precedence::call;
       case Type::right_paren:
         return Precedence::none;// right_paren will be parsed but not consumed when matching
       case Type::end_of_file:
         return Precedence::none;
-      case Type::qualifier:
-        return Precedence::qualifier;
+      case Type::keyword:
+        return Precedence::keyword;
       default:
         return Precedence::none;
-//        throw std::runtime_error(fmt::format("Unhandled value lbp {}", static_cast<int>(type)));
+        //        throw std::runtime_error(fmt::format("Unhandled value lbp {}", static_cast<int>(type)));
       }
     }();
 
     return static_cast<int>(precedence);
   }
 
-  parse_tree expression(const int rbp = 0)
+  parse_node expression(const int rbp = 0)
   {
     // parse prefix token
     const auto prefix = token;
@@ -257,7 +271,9 @@ struct Parser
 
     constexpr auto identifier{ make_token("[_a-zA-Z]+[_0-9a-zA-Z]*") };
     constexpr auto quoted_string{ make_token(R"("([^"\\]|\\.)*")") };
-    constexpr auto number{ make_token("[0-9]+([.][0-9])?") };
+    constexpr auto floatingpoint_number{ make_token("[0-9]+[.][0-9]*([eEpP][0-9]+)?[lLfF]?") };
+    constexpr auto integral_number{ make_token("([1-9][0-9]*|0[xX][0-9A-Fa-f]+|0[bB][01]+|0[0-7]+)") };
+//    constexpr auto integral_number{ make_token("[1-9][0-9]+") };
     constexpr auto whitespace{ make_token("\\s+") };
 
     using token = std::pair<std::string_view, Type>;
@@ -272,13 +288,22 @@ struct Parser
       token{ "/", Type::slash },
       token{ "^", Type::caret },
       token{ "~", Type::tilde },
+      token{ "%", Type::percent },
       token{ "!", Type::bang },
       token{ "?", Type::question },
       token{ "(", Type::left_paren },
       token{ ")", Type::right_paren },
-      token{ ";", Type::semicolon },
-      token{ "auto", Type::qualifier } };
+      token{ "{", Type::left_brace },
+      token{ "}", Type::right_brace },
+      token{ "[", Type::left_bracket },
+      token{ "]", Type::right_bracket },
+      token{ ";", Type::semicolon } };
 
+    constexpr std::array keywords{
+      std::string_view{ "auto" },
+      std::string_view{ "for" },
+      std::string_view{ "if" }
+    };
 
     if (auto result = ctre::search<whitespace>(v); result) { return ret(Type::whitespace, result); }
 
@@ -287,11 +312,14 @@ struct Parser
     }
 
     if (auto id_result = ctre::search<identifier>(v); id_result) {
-      return ret(Type::identifier, id_result);
+      const auto is_keyword = std::any_of(begin(keywords), end(keywords), [id = std::string_view{id_result}](const auto &rhs) { return id == rhs; });
+      return ret(is_keyword ? Type::keyword : Type::identifier, id_result);
     } else if (auto string_result = ctre::search<quoted_string>(v); string_result) {
       return ret(Type::string, string_result);
-    } else if (auto number_result = ctre::search<number>(v); number_result) {
-      return ret(Type::number, number_result);
+    } else if (auto float_result = ctre::search<floatingpoint_number>(v); float_result) {
+      return ret(Type::number, float_result);
+    } else if (auto int_result = ctre::search<integral_number>(v); int_result) {
+      return ret(Type::number, int_result);
     }
 
     return std::nullopt;

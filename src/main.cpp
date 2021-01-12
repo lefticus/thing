@@ -108,7 +108,7 @@ auto run_summation()
   }
 }
 
-void dump(const parser_test::Parser::parse_tree &node, const std::size_t indent=0)
+void dump(const parser_test::Parser::parse_node &node, const std::size_t indent=0)
 {
   fmt::print("{}'{}'\n", std::string(indent, ' '), node.item.match);
 
@@ -131,34 +131,16 @@ int main(int argc, const char **argv)
 
 //    constexpr std::string_view str{"3 * (2+-4)^4 + 3! - 123.1"};
   constexpr std::string_view str{ "auto func(x,a*(2/z+q),d,b)" };
-  auto string_to_parse = str;
-
-  parser_test::Parser parser;
-  while (!string_to_parse.empty()) {
-    auto parsed = parser.next_token(string_to_parse);
-    if (parsed.type == parser_test::Parser::Type::unknown) {
-      const auto [line, location] = parser_test::count_to_last(str.begin(), parsed.remainder.begin(), '\n');
-      // skip last matched newline, and find next newline after
-      const auto errored_line = std::string_view{std::next(location), std::find(std::next(location), parsed.remainder.end(), '\n')};
-      // count column from location to beginning of unmatched string
-      const auto column = std::distance(std::next(location), parsed.remainder.begin());
-
-      std::cout << fmt::format("Error parsing string ({},{})\n\n", line+1, column+1);
-      std::cout << errored_line;
-      std::cout << fmt::format("\n{:>{}}\n\n", '^', column+1);
-      return EXIT_FAILURE;
-    }
-    std::cout << '\'' << parsed.match << "' '" << parsed.remainder << "'\n";
-    string_to_parse = parsed.remainder;
-  }
 
   //fmt::print(" {} = {} \n", str, parser.parse(str));
 
-
+  parser_test::Parser parser;
   auto result = parser.parse(str);
   dump(result);
 
-  dump(parser.parse("auto x{15}"));
+  fmt::print("leftover: '{}'\n", result.item.remainder);
+
+  dump(parser.parse("auto x{(15/2)+(((3*x)-1)/2)}"));
 //  constexpr std::string_view str{ "auto func(x,a*(2/z+q),d,b)" };
 
   fmt::print("\n");

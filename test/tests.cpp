@@ -1,14 +1,29 @@
 #include <catch2/catch.hpp>
+#include "../include/parser.hpp"
+#include "../include/algorithms.hpp"
+#include <fmt/format.h>
 
-unsigned int Factorial(unsigned int number)
+TEST_CASE("Can parse expressions with precendence")
 {
-  return number <= 1 ? number : Factorial(number - 1) * number;
-}
+  constexpr std::string_view str = "5 * 2 + 4 / 3";
+  auto string_to_parse = str;
 
-TEST_CASE("Factorials are computed", "[factorial]")
-{
-  REQUIRE(Factorial(1) == 1);
-  REQUIRE(Factorial(2) == 2);
-  REQUIRE(Factorial(3) == 6);
-  REQUIRE(Factorial(10) == 3628800);
+  parser_test::Parser parser;
+  while (!string_to_parse.empty()) {
+    auto parsed = parser.next_token(string_to_parse);
+    if (parsed.type == parser_test::Parser::Type::unknown) {
+      const auto [line, location] = parser_test::count_to_last(str.begin(), parsed.remainder.begin(), '\n');
+      // skip last matched newline, and find next newline after
+      const auto errored_line = std::string_view{ std::next(location), std::find(std::next(location), parsed.remainder.end(), '\n') };
+      // count column from location to beginning of unmatched string
+      const auto column = std::distance(std::next(location), parsed.remainder.begin());
+
+      std::cout << fmt::format("Error parsing string ({},{})\n\n", line + 1, column + 1);
+      std::cout << errored_line;
+      std::cout << fmt::format("\n{:>{}}\n\n", '^', column + 1);
+      return EXIT_FAILURE;
+    }
+    std::cout << '\'' << parsed.match << "' '" << parsed.remainder << "'\n";
+    string_to_parse = parsed.remainder;
+  }
 }
