@@ -97,10 +97,12 @@ struct Parser
     return token.type == type;
   }
 
-  constexpr void match(const Type type)
+  constexpr lex_item match(const Type type)
   {
-    if (token.type != type) { throw std::runtime_error("uhoh"); }
-    token = next();
+    if (token.type != type) {
+      throw token;
+    }
+    return std::exchange(token, next());
   }
 
   parse_node nud(const lex_item &item)
@@ -112,8 +114,27 @@ struct Parser
       return parse_node{ item };
     case Type::number:
       return parse_node{ item };
+    case Type::string:
+      return parse_node{ item };
     case Type::keyword:
-      return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
+      if (item.match == "if") {
+        match(Type::left_paren);
+        auto result = parse_node{ item, { expression() } };
+        match(Type::right_paren);
+        result.children.push_back(compound_statement());
+        return result;
+//      } else if (item.match == "for") {
+//        match(Type::left_paren);
+  //
+  //      auto result = parse_node{ item };
+  //      if (peek(Type::semicolon)) {
+  //        result.children.push
+  //      }
+   //     match(Type::right_paren);
+   //     result.children
+      } else {
+        return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
+      }
     case Type::plus:
     case Type::minus:
       return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
@@ -154,7 +175,7 @@ struct Parser
       return func_call;
     }
     case Type::left_brace: {
-      parse_node decl{ item, {left, expression()} };
+      parse_node decl{ item, { left, expression() } };
       match(Type::right_brace);
       return decl;
     }
@@ -222,6 +243,28 @@ struct Parser
     return static_cast<int>(precedence);
   }
 
+  parse_node statement()
+  {
+    auto result = expression();
+
+    if (result.item.type == Type::left_brace || (!result.children.empty() && result.children.back().item.type == Type::left_brace)) {
+      // our last matched item was a compound statement of some sort, so we won't require a closing semicolon
+    } else {
+      match(Type::semicolon);
+    }
+    return result;
+  }
+
+  parse_node compound_statement()
+  {
+    auto result = parse_node{ match(Type::left_brace), {} };
+    while (!peek(Type::right_brace)) {
+      result.children.emplace_back(statement());
+    }
+    match(Type::right_brace);
+    return result;
+  }
+
   parse_node expression(const int rbp = 0)
   {
     // parse prefix token
@@ -273,7 +316,7 @@ struct Parser
     constexpr auto quoted_string{ make_token(R"("([^"\\]|\\.)*")") };
     constexpr auto floatingpoint_number{ make_token("[0-9]+[.][0-9]*([eEpP][0-9]+)?[lLfF]?") };
     constexpr auto integral_number{ make_token("([1-9][0-9]*|0[xX][0-9A-Fa-f]+|0[bB][01]+|0[0-7]+)") };
-//    constexpr auto integral_number{ make_token("[1-9][0-9]+") };
+    //    constexpr auto integral_number{ make_token("[1-9][0-9]+") };
     constexpr auto whitespace{ make_token("\\s+") };
 
     using token = std::pair<std::string_view, Type>;
@@ -312,7 +355,7 @@ struct Parser
     }
 
     if (auto id_result = ctre::search<identifier>(v); id_result) {
-      const auto is_keyword = std::any_of(begin(keywords), end(keywords), [id = std::string_view{id_result}](const auto &rhs) { return id == rhs; });
+      const auto is_keyword = std::any_of(begin(keywords), end(keywords), [id = std::string_view{ id_result }](const auto &rhs) { return id == rhs; });
       return ret(is_keyword ? Type::keyword : Type::identifier, id_result);
     } else if (auto string_result = ctre::search<quoted_string>(v); string_result) {
       return ret(Type::string, string_result);
