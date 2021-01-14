@@ -35,7 +35,7 @@ constexpr auto operator+(const ctll::fixed_string<N1> &lhs, const ctll::fixed_st
 
 struct Parser
 {
-  enum class Type {
+  enum class Token_Type {
     unknown = 0,
     identifier,
     number,
@@ -74,24 +74,114 @@ struct Parser
     logical_or
   };
 
+  constexpr static std::string_view to_string(const Token_Type type)
+  {
+    switch (type) {
+    case Token_Type::unknown:
+      return "<unknown>";
+    case Token_Type::identifier:
+      return "<identifier>";
+    case Token_Type::number:
+      return "<number literal>";
+    case Token_Type::increment:
+      return "++";
+    case Token_Type::decrement:
+      return "--";
+    case Token_Type::left_paren:
+      return "(";
+    case Token_Type::right_paren:
+      return ")";
+    case Token_Type::left_brace:
+      return "{";
+    case Token_Type::right_brace:
+      return "}";
+    case Token_Type::left_bracket:
+      return "[";
+    case Token_Type::right_bracket:
+      return "]";
+    case Token_Type::comma:
+      return ",";
+    case Token_Type::assign:
+      return "=";
+    case Token_Type::plus:
+      return "+";
+    case Token_Type::minus:
+      return "-";
+    case Token_Type::asterisk:
+      return "*";
+    case Token_Type::percent:
+      return "%";
+    case Token_Type::slash:
+      return "/";
+    case Token_Type::caret:
+      return "^";
+    case Token_Type::tilde:
+      return "~";
+    case Token_Type::bang:
+      return "!";
+    case Token_Type::question:
+      return "?";
+    case Token_Type::colon:
+      return ":";
+    case Token_Type::string:
+      return "<string-literal>";
+    case Token_Type::keyword:
+      return "<keyword>";
+    case Token_Type::whitespace:
+      return "<whitespace>";
+    case Token_Type::semicolon:
+      return ";";
+    case Token_Type::equals:
+      return "==";
+    case Token_Type::greater_than:
+      return ">";
+    case Token_Type::less_than:
+      return "<";
+    case Token_Type::greater_than_or_equal:
+      return ">=";
+    case Token_Type::less_than_or_equal:
+      return "<=";
+    case Token_Type::not_equals:
+      return "!=";
+    case Token_Type::end_of_file:
+      return "<end-of-file>";
+    case Token_Type::logical_and:
+      return "&&";
+    case Token_Type::logical_or:
+      return "||";
+    }
+
+    return "<unknown>";
+  }
+
   struct lex_item
   {
-    Type type{ Type::unknown };
+    Token_Type type{ Token_Type::unknown };
     std::string_view match;
     std::string_view remainder;
   };
 
   struct parse_node
   {
+    enum struct error_type { no_error, wrong_token_type, unexpected_prefix_token, unexpected_infix_token };
+
     lex_item item;
     std::vector<parse_node> children;
 
-    parse_node(lex_item item_, std::initializer_list<parse_node> children_ = {})
+    error_type error{ error_type::no_error };
+    Token_Type expected_token{};
+
+    [[nodiscard]] constexpr bool is_error() const noexcept { return error != error_type::no_error; }
+    explicit parse_node(lex_item item_, std::initializer_list<parse_node> children_ = {})
       : item{ std::move(item_) }, children{ children_ }
     {}
 
     parse_node(lex_item item_, std::vector<parse_node> &&children_)
       : item{ std::move(item_) }, children{ std::move(children_) }
+    {}
+
+    parse_node(lex_item item_, error_type error_, Token_Type expected_ = {})
+      : item{ std::move(item_) }, error{ error_ }, expected_token{ expected_ }
     {}
   };
 
@@ -104,110 +194,123 @@ struct Parser
     return expression();
   }
 
-  constexpr bool peek(const Type type, const std::string_view value="") const {
+  constexpr bool peek(const Token_Type type, const std::string_view value = "") const
+  {
     return token.type == type && (value.empty() || token.match == value);
   }
 
-  constexpr lex_item match(const Type type)
+  // if a match is not possible, an error node is returned.
+  [[nodiscard]] parse_node consume_match(const Token_Type type)
   {
     if (token.type != type) {
-      throw token;
+      return parse_node{ std::exchange(token, next()), parse_node::error_type::wrong_token_type, type };
     }
-    return std::exchange(token, next());
+    return parse_node{ std::exchange(token, next()), {} };
   }
 
-  parse_node list(bool consumeOpener, Type opener, Type closer, Type delimiter)
+  parse_node list(bool consumeOpener, Token_Type opener, Token_Type closer, Token_Type delimiter)
   {
     auto result = [&]() {
       if (consumeOpener) {
-        return parse_node{ match(opener) };
+        return consume_match(opener);
       } else {
-        return parse_node{ lex_item{ Type::unknown, {}, {} } };
+        return parse_node{ lex_item{ Token_Type::unknown, {}, {} } };
       }
     }();
 
     while (!peek(closer)) {
       result.children.push_back(expression());
       if (peek(delimiter)) {
-        match(delimiter);
+        // can discard, we know it will consume_match, we peeked
+        [[maybe_unused]] const auto match_result = consume_match(delimiter);
       } else {
         break;
       }
     }
 
-    match(closer);
+    if (const auto match_result = consume_match(closer); match_result.is_error()) {
+      result.children.push_back(match_result);
+    }
 
     return result;
   }
 
   parse_node control_block(const lex_item &item)
   {
-    parse_node result{ item, { list(true, Type::left_paren, Type::right_paren, Type::semicolon), statement() } };
-    if (peek(Type::keyword, "else")) {
-      result.children.push_back(parse_node{match(Type::keyword), {statement()}});
+    parse_node result{ item,
+      { list(true, Token_Type::left_paren, Token_Type::right_paren, Token_Type::semicolon), statement() } };
+    if (peek(Token_Type::keyword, "else")) {
+      result.children.push_back(parse_node{ consume_match(Token_Type::keyword).item, { statement() } });
     }
     return result;
   }
 
-  parse_node nud(const lex_item &item)
+  // prefix nodes
+  parse_node null_denotation(const lex_item &item)
   {
     constexpr auto prefix_precedence = static_cast<int>(Precedence::prefix);
 
     switch (item.type) {
-    case Type::identifier:
-    case Type::number:
-    case Type::string:
+    case Token_Type::identifier:
+    case Token_Type::number:
+    case Token_Type::string:
       return parse_node{ item };
-    case Type::keyword:
+    case Token_Type::keyword:
       if (item.match == "if" || item.match == "for" || item.match == "while") {
         return control_block(item);
       } else {
         return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
       }
-    case Type::plus:
-    case Type::minus:
+    case Token_Type::plus:
+    case Token_Type::minus:
       return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
-    case Type::left_paren: {
+    case Token_Type::left_paren: {
       const auto result = expression();
-      match(Type::right_paren);
+      if (const auto match_result = consume_match(Token_Type::right_paren); match_result.is_error()) {
+        return match_result;
+      }
 
       return result;
     }
     default:
-      throw item;
+      return parse_node{ item, parse_node::error_type::unexpected_prefix_token };
     };
   }
 
-  parse_node led(const lex_item &item, const parse_node &left)
+  // infix processing
+  [[nodiscard]] parse_node left_denotation(const lex_item &item, const parse_node &left)
   {
     switch (item.type) {
-    case Type::plus:
-    case Type::minus:
-    case Type::asterisk:
-    case Type::slash:
-    case Type::less_than:
-    case Type::less_than_or_equal:
-    case Type::greater_than:
-    case Type::greater_than_or_equal:
-    case Type::logical_and:
-    case Type::logical_or:
-    case Type::equals:
-    case Type::not_equals:
+    case Token_Type::plus:
+    case Token_Type::minus:
+    case Token_Type::asterisk:
+    case Token_Type::slash:
+    case Token_Type::less_than:
+    case Token_Type::less_than_or_equal:
+    case Token_Type::greater_than:
+    case Token_Type::greater_than_or_equal:
+    case Token_Type::logical_and:
+    case Token_Type::logical_or:
+    case Token_Type::equals:
+    case Token_Type::not_equals:
       return parse_node{ item, { left, expression(lbp(item.type)) } };
-    case Type::bang:
+    case Token_Type::bang:
       return parse_node{ item, { left } };
-    case Type::left_paren: {
+    case Token_Type::left_paren: {
       auto result = left;
-      result.children.emplace_back(item, list(false, Type::left_paren, Type::right_paren, Type::comma).children);
+      result.children.emplace_back(
+        item, list(false, Token_Type::left_paren, Token_Type::right_paren, Token_Type::comma).children);
       return result;
     }
-    case Type::left_brace: {
+    case Token_Type::left_brace: {
       auto result = left;
       result.children.push_back(parse_node{ item, { expression() } });
-      match(Type::right_brace);
+      if (const auto match_result = consume_match(Token_Type::right_brace); match_result.is_error()) {
+        return match_result;
+      }
       return result;
     }
-    case Type::caret:
+    case Token_Type::caret:
       // caret, as an infix, is right-associative, so we decrease its
       // precedence slightly
       // https://github.com/munificent/bantam/blob/8b0b06a1543b7d9e84ba2bb8d916979459971b2d/src/com/stuffwithstuff/bantam/parselets/BinaryOperatorParselet.java#L20-L27
@@ -216,7 +319,7 @@ struct Parser
       // the bantam example notches it down to share with other levels
       return parse_node{ item, { left, expression(lbp(item.type) - 1) } };
     default:
-      throw item;
+      return parse_node{ item, parse_node::error_type::unexpected_infix_token };
     }
   }
 
@@ -239,40 +342,40 @@ struct Parser
 
   // this is for infix precedence values
   // lbp = left binding power
-  static constexpr int lbp(const Type type)
+  [[nodiscard]] static constexpr int lbp(const Token_Type type) noexcept
   {
     const auto precedence = [type]() -> Precedence {
       switch (type) {
-      case Type::plus:
-      case Type::minus:
+      case Token_Type::plus:
+      case Token_Type::minus:
         return Precedence::sum;
-      case Type::asterisk:
-      case Type::slash:
+      case Token_Type::asterisk:
+      case Token_Type::slash:
         return Precedence::product;
-      case Type::caret:
+      case Token_Type::caret:
         return Precedence::exponent;
-      case Type::bang:
+      case Token_Type::bang:
         return Precedence::postfix;
-      case Type::left_brace:
-      case Type::left_paren:
+      case Token_Type::left_brace:
+      case Token_Type::left_paren:
         return Precedence::call;
-      case Type::right_paren:
+      case Token_Type::right_paren:
         return Precedence::none;// right_paren will be parsed but not consumed when matching
-      case Type::end_of_file:
+      case Token_Type::end_of_file:
         return Precedence::none;
-      case Type::keyword:
+      case Token_Type::keyword:
         return Precedence::keyword;
-      case Type::less_than_or_equal:
-      case Type::less_than:
-      case Type::greater_than_or_equal:
-      case Type::greater_than:
+      case Token_Type::less_than_or_equal:
+      case Token_Type::less_than:
+      case Token_Type::greater_than_or_equal:
+      case Token_Type::greater_than:
         return Precedence::relational_comparison;
-      case Type::logical_and:
+      case Token_Type::logical_and:
         return Precedence::logical_and;
-      case Type::logical_or:
+      case Token_Type::logical_or:
         return Precedence::logical_or;
-      case Type::equals:
-      case Type::not_equals:
+      case Token_Type::equals:
+      case Token_Type::not_equals:
         return Precedence::equality_comparison;
       default:
         return Precedence::none;
@@ -283,58 +386,62 @@ struct Parser
     return static_cast<int>(precedence);
   }
 
-  parse_node statement()
+  [[nodiscard]] parse_node statement()
   {
-    if (peek(Type::left_brace)) { return compound_statement(); }
+    if (peek(Token_Type::left_brace)) { return compound_statement(); }
     auto result = expression();
 
-    if (result.item.type == Type::left_brace
-        || (!result.children.empty() && result.children.back().item.type == Type::left_brace)) {
+    if (result.item.type == Token_Type::left_brace
+        || (!result.children.empty() && result.children.back().item.type == Token_Type::left_brace)) {
       // our last matched item was a compound statement of some sort, so we won't require a closing semicolon
     } else {
-      match(Type::semicolon);
+      if (const auto match_result = consume_match(Token_Type::semicolon); match_result.is_error()) {
+        return match_result;
+      }
     }
     return result;
   }
 
-  parse_node compound_statement()
+  [[nodiscard]] parse_node compound_statement()
   {
-    auto result = parse_node{ match(Type::left_brace), {} };
-    while (!peek(Type::right_brace)) { result.children.emplace_back(statement()); }
-    match(Type::right_brace);
+    auto result = consume_match(Token_Type::left_brace);
+    if (result.is_error()) { return result; }
+    while (!peek(Token_Type::right_brace)) { result.children.emplace_back(statement()); }
+    // we peeked, it'll consume_match
+    [[maybe_unused]] const auto right_brace = consume_match(Token_Type::right_brace);
     return result;
   }
 
-  parse_node expression(const int rbp = 0)
+  [[nodiscard]] parse_node expression(const int rbp = 0)
   {
     // parse prefix token
     const auto prefix = token;
     token = next();
-    auto left = nud(prefix);
+    auto left = null_denotation(prefix);
 
     // parse infix / postfix tokens
     while (rbp < lbp(token.type)) {
       const auto t = token;
       token = next();
-      left = led(t, left);
+      left = left_denotation(t, left);
     }
 
     return left;
   }
 
-  constexpr lex_item next() noexcept { return next_token(token.remainder); }
+  [[nodiscard]] constexpr lex_item next() const noexcept { return next_token(token.remainder); }
 
   static constexpr lex_item next_token(std::string_view v) noexcept
   {
     while (true) {
       if (const auto item = lexer(v); item) {
-        if (item->type != Type::whitespace) {
+        if (item->type != Token_Type::whitespace) {
           return *item;
         } else {
           v = item->remainder;
         }
       } else {
-        return lex_item{ Type::unknown, v, v };
+        return lex_item{ Token_Type::unknown, v, v };
       }
     }
   }
@@ -342,13 +449,13 @@ struct Parser
   static constexpr std::optional<lex_item> lexer(std::string_view v) noexcept
   {
 
-    if (v.empty()) { return lex_item{ Type::end_of_file, v, v }; }
+    if (v.empty()) { return lex_item{ Token_Type::end_of_file, v, v }; }
 
     // prefix with ^ so that the regex search only matches the start of the
     // string. Hana assures me this is efficient ;) (at runtime that is)
     constexpr auto make_token = [](const auto &s) { return ctll::fixed_string{ "^" } + ctll::fixed_string{ s }; };
 
-    const auto ret = [v](const Type type, std::string_view found) -> lex_item {
+    const auto ret = [v](const Token_Type type, std::string_view found) -> lex_item {
       return { type, v.substr(0, found.size()), v.substr(found.size()) };
     };
 
@@ -359,42 +466,42 @@ struct Parser
     //    constexpr auto integral_number{ make_token("[1-9][0-9]+") };
     constexpr auto whitespace{ make_token("\\s+") };
 
-    using token = std::pair<std::string_view, Type>;
-    constexpr std::array tokens{ token{ "++", Type::increment },
-      token{ "--", Type::decrement },
-      token{ ">=", Type::greater_than_or_equal },
-      token{ "<=", Type::less_than_or_equal },
-      token{ "!=", Type::not_equals },
-      token{ "==", Type::equals },
-      token{ "||", Type::logical_or },
-      token{ "&&", Type::logical_and },
-      token{ "<", Type::less_than },
-      token{ ">", Type::greater_than },
-      token{ ":", Type::colon },
-      token{ ",", Type::comma },
-      token{ "=", Type::assign },
-      token{ "+", Type::plus },
-      token{ "-", Type::minus },
-      token{ "*", Type::asterisk },
-      token{ "/", Type::slash },
-      token{ "^", Type::caret },
-      token{ "~", Type::tilde },
-      token{ "%", Type::percent },
-      token{ "!", Type::bang },
-      token{ "?", Type::question },
-      token{ "(", Type::left_paren },
-      token{ ")", Type::right_paren },
-      token{ "{", Type::left_brace },
-      token{ "}", Type::right_brace },
-      token{ "[", Type::left_bracket },
-      token{ "]", Type::right_bracket },
-      token{ ";", Type::semicolon } };
+    using token = std::pair<std::string_view, Token_Type>;
+    constexpr std::array tokens{ token{ "++", Token_Type::increment },
+      token{ "--", Token_Type::decrement },
+      token{ ">=", Token_Type::greater_than_or_equal },
+      token{ "<=", Token_Type::less_than_or_equal },
+      token{ "!=", Token_Type::not_equals },
+      token{ "==", Token_Type::equals },
+      token{ "||", Token_Type::logical_or },
+      token{ "&&", Token_Type::logical_and },
+      token{ "<", Token_Type::less_than },
+      token{ ">", Token_Type::greater_than },
+      token{ ":", Token_Type::colon },
+      token{ ",", Token_Type::comma },
+      token{ "=", Token_Type::assign },
+      token{ "+", Token_Type::plus },
+      token{ "-", Token_Type::minus },
+      token{ "*", Token_Type::asterisk },
+      token{ "/", Token_Type::slash },
+      token{ "^", Token_Type::caret },
+      token{ "~", Token_Type::tilde },
+      token{ "%", Token_Type::percent },
+      token{ "!", Token_Type::bang },
+      token{ "?", Token_Type::question },
+      token{ "(", Token_Type::left_paren },
+      token{ ")", Token_Type::right_paren },
+      token{ "{", Token_Type::left_brace },
+      token{ "}", Token_Type::right_brace },
+      token{ "[", Token_Type::left_bracket },
+      token{ "]", Token_Type::right_bracket },
+      token{ ";", Token_Type::semicolon } };
 
     constexpr std::array keywords{
       std::string_view{ "auto" }, std::string_view{ "for" }, std::string_view{ "if" }, std::string_view{ "else" }
     };
 
-    if (auto result = ctre::search<whitespace>(v); result) { return ret(Type::whitespace, result); }
+    if (auto result = ctre::search<whitespace>(v); result) { return ret(Token_Type::whitespace, result); }
 
     for (const auto &oper : tokens) {
       if (v.starts_with(oper.first)) { return ret(oper.second, oper.first); }
@@ -403,13 +510,13 @@ struct Parser
     if (auto id_result = ctre::search<identifier>(v); id_result) {
       const auto is_keyword = std::any_of(
         begin(keywords), end(keywords), [id = std::string_view{ id_result }](const auto &rhs) { return id == rhs; });
-      return ret(is_keyword ? Type::keyword : Type::identifier, id_result);
+      return ret(is_keyword ? Token_Type::keyword : Token_Type::identifier, id_result);
     } else if (auto string_result = ctre::search<quoted_string>(v); string_result) {
-      return ret(Type::string, string_result);
+      return ret(Token_Type::string, string_result);
     } else if (auto float_result = ctre::search<floatingpoint_number>(v); float_result) {
-      return ret(Type::number, float_result);
+      return ret(Token_Type::number, float_result);
     } else if (auto int_result = ctre::search<integral_number>(v); int_result) {
-      return ret(Type::number, int_result);
+      return ret(Token_Type::number, int_result);
     }
 
     return std::nullopt;

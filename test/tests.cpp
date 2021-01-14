@@ -11,7 +11,7 @@ TEST_CASE("Can parse expressions with precendence")
   parser_test::Parser parser;
   while (!string_to_parse.empty()) {
     auto parsed = parser.next_token(string_to_parse);
-    if (parsed.type == parser_test::Parser::Type::unknown) {
+    if (parsed.type == parser_test::Parser::Token_Type::unknown) {
       const auto [line, location] = parser_test::count_to_last(str.begin(), parsed.remainder.begin(), '\n');
       // skip last matched newline, and find next newline after
       const auto errored_line = std::string_view{ std::next(location), std::find(std::next(location), parsed.remainder.end(), '\n') };
