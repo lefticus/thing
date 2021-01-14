@@ -355,7 +355,7 @@ struct Parser
     constexpr auto identifier{ make_token("[_a-zA-Z]+[_0-9a-zA-Z]*") };
     constexpr auto quoted_string{ make_token(R"("([^"\\]|\\.)*")") };
     constexpr auto floatingpoint_number{ make_token("[0-9]+[.][0-9]*([eEpP][0-9]+)?[lLfF]?") };
-    constexpr auto integral_number{ make_token("([1-9][0-9]*|0[xX][0-9A-Fa-f]+|0[bB][01]+|0[0-7]+)") };
+    constexpr auto integral_number{ make_token("([0-9]+|0[xX][0-9A-Fa-f]+|0[bB][01]+|0[oO][0-7]+)") };
     //    constexpr auto integral_number{ make_token("[1-9][0-9]+") };
     constexpr auto whitespace{ make_token("\\s+") };
 
