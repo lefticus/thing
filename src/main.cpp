@@ -161,6 +161,26 @@ int main(int argc, const char **argv)
   parse_n_dump("if (true) { print(\"Hello \\\"World\\\" [({])}\");\n\ndo(thing); }");
   parse_n_dump("if (true) { if (false) { do_thing(); } }");
 
+  parse_n_dump(R"(
+auto func(auto x, auto y) {
+  if (x > y && y != 5) {
+    print("Hello");
+  } else {
+    print("World");
+  }
+}
+)");
+
+  parse_n_dump(R"(
+auto func(auto x, auto y) {
+  if (x > y && y != 5) {
+    print("Hello");
+  } else if (x == 2) {
+    print("World");
+  }
+}
+)");
+
   run_summation();
 
 }

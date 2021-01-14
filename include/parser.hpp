@@ -63,7 +63,15 @@ struct Parser
     keyword,
     whitespace,
     semicolon,
-    end_of_file
+    equals,
+    greater_than,
+    less_than,
+    greater_than_or_equal,
+    less_than_or_equal,
+    not_equals,
+    end_of_file,
+    logical_and,
+    logical_or
   };
 
   struct lex_item
@@ -78,9 +86,13 @@ struct Parser
     lex_item item;
     std::vector<parse_node> children;
 
-    parse_node(lex_item item_, std::initializer_list<parse_node> children_ = {}) : item{ std::move(item_) }, children{ children_ }
-    {
-    }
+    parse_node(lex_item item_, std::initializer_list<parse_node> children_ = {})
+      : item{ std::move(item_) }, children{ children_ }
+    {}
+
+    parse_node(lex_item item_, std::vector<parse_node> &&children_)
+      : item{ std::move(item_) }, children{ std::move(children_) }
+    {}
   };
 
   lex_item token;
@@ -92,9 +104,8 @@ struct Parser
     return expression();
   }
 
-  constexpr bool peek(const Type type) const
-  {
-    return token.type == type;
+  constexpr bool peek(const Type type, const std::string_view value="") const {
+    return token.type == type && (value.empty() || token.match == value);
   }
 
   constexpr lex_item match(const Type type)
@@ -105,33 +116,51 @@ struct Parser
     return std::exchange(token, next());
   }
 
+  parse_node list(bool consumeOpener, Type opener, Type closer, Type delimiter)
+  {
+    auto result = [&]() {
+      if (consumeOpener) {
+        return parse_node{ match(opener) };
+      } else {
+        return parse_node{ lex_item{ Type::unknown, {}, {} } };
+      }
+    }();
+
+    while (!peek(closer)) {
+      result.children.push_back(expression());
+      if (peek(delimiter)) {
+        match(delimiter);
+      } else {
+        break;
+      }
+    }
+
+    match(closer);
+
+    return result;
+  }
+
+  parse_node control_block(const lex_item &item)
+  {
+    parse_node result{ item, { list(true, Type::left_paren, Type::right_paren, Type::semicolon), statement() } };
+    if (peek(Type::keyword, "else")) {
+      result.children.push_back(parse_node{match(Type::keyword), {statement()}});
+    }
+    return result;
+  }
+
   parse_node nud(const lex_item &item)
   {
     constexpr auto prefix_precedence = static_cast<int>(Precedence::prefix);
 
     switch (item.type) {
     case Type::identifier:
-      return parse_node{ item };
     case Type::number:
-      return parse_node{ item };
     case Type::string:
       return parse_node{ item };
     case Type::keyword:
-      if (item.match == "if") {
-        match(Type::left_paren);
-        auto result = parse_node{ item, { expression() } };
-        match(Type::right_paren);
-        result.children.push_back(compound_statement());
-        return result;
-//      } else if (item.match == "for") {
-//        match(Type::left_paren);
-  //
-  //      auto result = parse_node{ item };
-  //      if (peek(Type::semicolon)) {
-  //        result.children.push
-  //      }
-   //     match(Type::right_paren);
-   //     result.children
+      if (item.match == "if" || item.match == "for" || item.match == "while") {
+        return control_block(item);
       } else {
         return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
       }
@@ -145,7 +174,7 @@ struct Parser
       return result;
     }
     default:
-      throw std::runtime_error("Unhandled nud");
+      throw item;
     };
   }
 
@@ -156,28 +185,27 @@ struct Parser
     case Type::minus:
     case Type::asterisk:
     case Type::slash:
+    case Type::less_than:
+    case Type::less_than_or_equal:
+    case Type::greater_than:
+    case Type::greater_than_or_equal:
+    case Type::logical_and:
+    case Type::logical_or:
+    case Type::equals:
+    case Type::not_equals:
       return parse_node{ item, { left, expression(lbp(item.type)) } };
     case Type::bang:
       return parse_node{ item, { left } };
     case Type::left_paren: {
-      parse_node func_call{ item, { left } };
-      if (!peek(Type::right_paren)) {
-        while (true) {
-          func_call.children.push_back(expression());
-          if (peek(Type::comma)) {
-            match(Type::comma);
-          } else {
-            break;// end of list
-          }
-        }
-      }
-      match(Type::right_paren);
-      return func_call;
+      auto result = left;
+      result.children.emplace_back(item, list(false, Type::left_paren, Type::right_paren, Type::comma).children);
+      return result;
     }
     case Type::left_brace: {
-      parse_node decl{ item, { left, expression() } };
+      auto result = left;
+      result.children.push_back(parse_node{ item, { expression() } });
       match(Type::right_brace);
-      return decl;
+      return result;
     }
     case Type::caret:
       // caret, as an infix, is right-associative, so we decrease its
@@ -188,22 +216,25 @@ struct Parser
       // the bantam example notches it down to share with other levels
       return parse_node{ item, { left, expression(lbp(item.type) - 1) } };
     default:
-      throw std::runtime_error("Unhandled led");
+      throw item;
     }
   }
 
   enum struct Precedence {
     none = 0,
     // comma = 1,
-    assignment = 2,
-    conditional = 3,
-    sum = 3,
-    product = 4,
-    exponent = 5,
-    prefix = 7,
-    postfix = 8,
-    call = 9,
-    keyword = 10
+    // assignment = 2,
+    logical_or = 1,
+    logical_and = 2,
+    equality_comparison = 3,
+    relational_comparison = 4,
+    sum = 5,
+    product = 6,
+    exponent = 7,
+    prefix = 8,
+    postfix = 9,
+    call = 10,
+    keyword = 11
   };
 
   // this is for infix precedence values
@@ -213,11 +244,9 @@ struct Parser
     const auto precedence = [type]() -> Precedence {
       switch (type) {
       case Type::plus:
-        return Precedence::sum;
       case Type::minus:
         return Precedence::sum;
       case Type::asterisk:
-        return Precedence::product;
       case Type::slash:
         return Precedence::product;
       case Type::caret:
@@ -225,7 +254,6 @@ struct Parser
       case Type::bang:
         return Precedence::postfix;
       case Type::left_brace:
-        return Precedence::call;
       case Type::left_paren:
         return Precedence::call;
       case Type::right_paren:
@@ -234,6 +262,18 @@ struct Parser
         return Precedence::none;
       case Type::keyword:
         return Precedence::keyword;
+      case Type::less_than_or_equal:
+      case Type::less_than:
+      case Type::greater_than_or_equal:
+      case Type::greater_than:
+        return Precedence::relational_comparison;
+      case Type::logical_and:
+        return Precedence::logical_and;
+      case Type::logical_or:
+        return Precedence::logical_or;
+      case Type::equals:
+      case Type::not_equals:
+        return Precedence::equality_comparison;
       default:
         return Precedence::none;
         //        throw std::runtime_error(fmt::format("Unhandled value lbp {}", static_cast<int>(type)));
@@ -245,9 +285,11 @@ struct Parser
 
   parse_node statement()
   {
+    if (peek(Type::left_brace)) { return compound_statement(); }
     auto result = expression();
 
-    if (result.item.type == Type::left_brace || (!result.children.empty() && result.children.back().item.type == Type::left_brace)) {
+    if (result.item.type == Type::left_brace
+        || (!result.children.empty() && result.children.back().item.type == Type::left_brace)) {
       // our last matched item was a compound statement of some sort, so we won't require a closing semicolon
     } else {
       match(Type::semicolon);
@@ -258,9 +300,7 @@ struct Parser
   parse_node compound_statement()
   {
     auto result = parse_node{ match(Type::left_brace), {} };
-    while (!peek(Type::right_brace)) {
-      result.children.emplace_back(statement());
-    }
+    while (!peek(Type::right_brace)) { result.children.emplace_back(statement()); }
     match(Type::right_brace);
     return result;
   }
@@ -322,6 +362,14 @@ struct Parser
     using token = std::pair<std::string_view, Type>;
     constexpr std::array tokens{ token{ "++", Type::increment },
       token{ "--", Type::decrement },
+      token{ ">=", Type::greater_than_or_equal },
+      token{ "<=", Type::less_than_or_equal },
+      token{ "!=", Type::not_equals },
+      token{ "==", Type::equals },
+      token{ "||", Type::logical_or },
+      token{ "&&", Type::logical_and },
+      token{ "<", Type::less_than },
+      token{ ">", Type::greater_than },
       token{ ":", Type::colon },
       token{ ",", Type::comma },
       token{ "=", Type::assign },
@@ -343,9 +391,7 @@ struct Parser
       token{ ";", Type::semicolon } };
 
     constexpr std::array keywords{
-      std::string_view{ "auto" },
-      std::string_view{ "for" },
-      std::string_view{ "if" }
+      std::string_view{ "auto" }, std::string_view{ "for" }, std::string_view{ "if" }, std::string_view{ "else" }
     };
 
     if (auto result = ctre::search<whitespace>(v); result) { return ret(Type::whitespace, result); }
@@ -355,7 +401,8 @@ struct Parser
     }
 
     if (auto id_result = ctre::search<identifier>(v); id_result) {
-      const auto is_keyword = std::any_of(begin(keywords), end(keywords), [id = std::string_view{ id_result }](const auto &rhs) { return id == rhs; });
+      const auto is_keyword = std::any_of(
+        begin(keywords), end(keywords), [id = std::string_view{ id_result }](const auto &rhs) { return id == rhs; });
       return ret(is_keyword ? Type::keyword : Type::identifier, id_result);
     } else if (auto string_result = ctre::search<quoted_string>(v); string_result) {
       return ret(Type::string, string_result);
