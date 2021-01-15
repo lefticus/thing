@@ -98,7 +98,7 @@ auto run_summation()
   }
 }
 
-void dump(std::string_view input, const parser_test::Parser::parse_node &node, const std::size_t indent = 0)
+void dump(std::string_view input, const thing::Parser::parse_node &node, const std::size_t indent = 0)
 {
   if (node.is_error()) {
     const auto parsed = node.item;
@@ -114,10 +114,10 @@ void dump(std::string_view input, const parser_test::Parser::parse_node &node, c
     std::cout << errored_line;
     std::cout << fmt::format("\n{:>{}}\n", '|', column);
 
-    using error_type = parser_test::Parser::parse_node::error_type;
+    using error_type = thing::Parser::parse_node::error_type;
     switch (node.error) {
     case error_type::wrong_token_type:
-      std::cout << fmt::format("{:>{}}'{}' expected\n", "", column-1, parser_test::Parser::to_string(node.expected_token));
+      std::cout << fmt::format("{:>{}}'{}' expected\n", "", column-1, thing::lexer::to_string(node.expected_token));
 //      std::cout << "Expected token of type: " << static_cast<int>(node.expected_token) << '\n';
       break;
     case error_type::unexpected_infix_token:
@@ -140,7 +140,7 @@ void dump(std::string_view input, const parser_test::Parser::parse_node &node, c
 
 void parse_n_dump(std::string_view input)
 {
-  parser_test::Parser parser;
+  thing::Parser parser;
   dump(input, parser.parse(input));
 }
 

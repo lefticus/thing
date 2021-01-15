@@ -6,6 +6,7 @@
 #include <tuple>
 #include <variant>
 
+
 struct StackInterface {};
 
 template <typename... Contained> struct Stack : StackInterface {
