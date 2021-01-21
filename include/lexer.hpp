@@ -18,9 +18,8 @@ constexpr auto operator+(const ctll::fixed_string<N1> &lhs, const ctll::fixed_st
 
 namespace thing::lexing {
 
-[[nodiscard]] static constexpr std::optional<lex_item> lexer(std::string_view v) noexcept
+[[nodiscard]] static constexpr lex_item lexer(std::string_view v) noexcept
 {
-
   if (v.empty()) { return lex_item{ token_type::end_of_file, v, v }; }
 
   // prefix with ^ so that the regex search only matches the start of the
@@ -92,7 +91,7 @@ namespace thing::lexing {
     return ret(token_type::number, int_result);
   }
 
-  return std::nullopt;
+  return lex_item{token_type::unknown, v, v.substr(v.size())};
 }
 
 }// namespace thing::lexing

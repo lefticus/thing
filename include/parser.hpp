@@ -324,14 +324,11 @@ struct parser
   [[nodiscard]] static constexpr lexing::lex_item next_token(std::string_view v) noexcept
   {
     while (true) {
-      if (const auto item = lexing::lexer(v); item) {
-        if (item->type != lexing::token_type::whitespace) {
-          return *item;
-        } else {
-          v = item->remainder;
-        }
+      const auto item = lexing::lexer(v);
+      if (item.type != lexing::token_type::whitespace) {
+        return item;
       } else {
-        return lexing::lex_item{ lexing::token_type::unknown, v, v };
+        v = item.remainder;
       }
     }
   }
