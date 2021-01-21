@@ -5,7 +5,7 @@
 TEST_CASE("Can parse expressions with precendence")
 {
   constexpr std::string_view str = "5 * 2 + 4 / 3";
-  thing::Parser parser;
+  thing::parsing::parser parser;
   const auto result = parser.parse(str);
 
   CHECK(result.item.match == "+");

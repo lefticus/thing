@@ -8,80 +8,70 @@
 #include <cstdint>
 #include <iterator>
 #include <string_view>
-#include <ctre.hpp>
 
+#include "parse_node.hpp"
 #include "lexer.hpp"
 
-// references
+// We are attempting to implement a "Pratt Parser" here, using
+// these references:
+//
 // http://journal.stuffwithstuff.com/2011/03/19/pratt-parsers-expression-parsing-made-easy/
 // https://github.com/munificent/bantam/tree/master/src/com/stuffwithstuff/bantam
 // https://github.com/MattDiesel/cpp-pratt
 // https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
 // https://eli.thegreenplace.net/2010/01/02/top-down-operator-precedence-parsing
-// https://stackoverflow.com/questions/380455/looking-for-a-clear-definition-of-what-a-tokenizer-parser-and-lexers-are
+// https://stackoverflow.com/questions/380455/looking-for-a-clear-definition-of-what-a-tokenizer-parser-and-lexings-are
 
 
-namespace thing {
-// Helper function for concatenating two different ct11::fixed_strings
+namespace thing::parsing {
 
 
-struct Parser
+struct parser
 {
 
-  struct parse_node
-  {
-    enum struct error_type { no_error, wrong_token_type, unexpected_prefix_token, unexpected_infix_token };
-
-    lexer::lex_item item;
-    std::vector<parse_node> children;
-
-    error_type error{ error_type::no_error };
-    lexer::Token_Type expected_token{};
-
-    [[nodiscard]] constexpr bool is_error() const noexcept { return error != error_type::no_error; }
-    explicit parse_node(lexer::lex_item item_, std::initializer_list<parse_node> children_ = {})
-      : item{ std::move(item_) }, children{ children_ }
-    {}
-
-    parse_node(lexer::lex_item item_, std::vector<parse_node> &&children_)
-      : item{ std::move(item_) }, children{ std::move(children_) }
-    {}
-
-    parse_node(lexer::lex_item item_, error_type error_, lexer::Token_Type expected_ = {})
-      : item{ std::move(item_) }, error{ error_ }, expected_token{ expected_ }
-    {}
-  };
-
-  lexer::lex_item token;
+  lexing::lex_item next_lexed_token;
 
 
   auto parse(std::string_view v)
   {
-    token = next_token(v);
+    next_lexed_token = next_token(v);
     return expression();
   }
 
-  constexpr bool peek(const lexer::Token_Type type, const std::string_view value = "") const
+  [[nodiscard]] constexpr bool peek(const lexing::token_type type, const std::string_view value = "") const noexcept
   {
-    return token.type == type && (value.empty() || token.match == value);
+    return next_lexed_token.type == type && (value.empty() || next_lexed_token.match == value);
+  }
+
+  [[nodiscard]] constexpr bool next_token_is_valid() const noexcept {
+    switch (next_lexed_token.type) {
+    case lexing::token_type::end_of_file:
+    case lexing::token_type::unknown:
+      return false;
+    default:
+      return true;
+    }
   }
 
   // if a match is not possible, an error node is returned.
-  [[nodiscard]] parse_node consume_match(const lexer::Token_Type type)
+  [[nodiscard]] parse_node consume_match(const lexing::token_type type)
   {
-    if (token.type != type) {
-      return parse_node{ std::exchange(token, next()), parse_node::error_type::wrong_token_type, type };
+    if (next_lexed_token.type != type) {
+      return parse_node{ std::exchange(next_lexed_token, next()), parse_node::error_type::wrong_token_type, type };
     }
-    return parse_node{ std::exchange(token, next()), {} };
+    return parse_node{ std::exchange(next_lexed_token, next()), {} };
   }
 
-  parse_node list(bool consumeOpener, lexer::Token_Type opener, lexer::Token_Type closer, lexer::Token_Type delimiter)
+  [[nodiscard]] parse_node list(const bool consume_opener,
+    const lexing::token_type opener,
+    const lexing::token_type closer,
+    const lexing::token_type delimiter)
   {
     auto result = [&]() {
-      if (consumeOpener) {
+      if (consume_opener) {
         return consume_match(opener);
       } else {
-        return parse_node{ lexer::lex_item{ lexer::Token_Type::unknown, {}, {} } };
+        return parse_node{ lexing::lex_item{ lexing::token_type::unknown, {}, {} } };
       }
     }();
 
@@ -95,6 +85,7 @@ struct Parser
       }
     }
 
+    // a failed match is useful information, so we save it for later reporting
     if (const auto match_result = consume_match(closer); match_result.is_error()) {
       result.children.push_back(match_result);
     }
@@ -102,38 +93,41 @@ struct Parser
     return result;
   }
 
-  parse_node control_block(const lexer::lex_item &item)
+  [[nodiscard]] parse_node control_block(const lexing::lex_item &item)
   {
     parse_node result{ item,
-      { list(true, lexer::Token_Type::left_paren, lexer::Token_Type::right_paren, lexer::Token_Type::semicolon), statement() } };
-    if (peek(lexer::Token_Type::keyword, "else")) {
-      result.children.push_back(parse_node{ consume_match(lexer::Token_Type::keyword).item, { statement() } });
+      { list(true, lexing::token_type::left_paren, lexing::token_type::right_paren, lexing::token_type::semicolon),
+        statement() } };
+    if (peek(lexing::token_type::keyword, "else")) {
+      result.children.push_back(parse_node{ consume_match(lexing::token_type::keyword).item, { statement() } });
     }
     return result;
   }
 
   // prefix nodes
-  parse_node null_denotation(const lexer::lex_item &item)
+  [[nodiscard]] parse_node null_denotation(const lexing::lex_item &item)
   {
-    constexpr auto prefix_precedence = static_cast<int>(Precedence::prefix);
+    constexpr auto prefix_precedence = static_cast<int>(precedence::prefix);
 
     switch (item.type) {
-    case lexer::Token_Type::identifier:
-    case lexer::Token_Type::number:
-    case lexer::Token_Type::string:
+    case lexing::token_type::identifier:
+    case lexing::token_type::number:
+    case lexing::token_type::string:
       return parse_node{ item };
-    case lexer::Token_Type::keyword:
+    case lexing::token_type::keyword:
       if (item.match == "if" || item.match == "for" || item.match == "while") {
         return control_block(item);
       } else {
         return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
       }
-    case lexer::Token_Type::plus:
-    case lexer::Token_Type::minus:
+    case lexing::token_type::plus:
+    case lexing::token_type::minus:
       return parse_node{ item, { parse_node{ expression(prefix_precedence) } } };
-    case lexer::Token_Type::left_paren: {
-      const auto result = expression();
-      if (const auto match_result = consume_match(lexer::Token_Type::right_paren); match_result.is_error()) {
+    case lexing::token_type::left_paren: {
+      // not const because of two different return paths, we don't want to
+      // disable automatic moves
+      auto result = expression();
+      if (auto match_result = consume_match(lexing::token_type::right_paren); match_result.is_error()) {
         return match_result;
       }
 
@@ -145,39 +139,40 @@ struct Parser
   }
 
   // infix processing
-  [[nodiscard]] parse_node left_denotation(const lexer::lex_item &item, const parse_node &left)
+  [[nodiscard]] parse_node left_denotation(const lexing::lex_item &item, const parse_node &left)
   {
     switch (item.type) {
-    case lexer::Token_Type::plus:
-    case lexer::Token_Type::minus:
-    case lexer::Token_Type::asterisk:
-    case lexer::Token_Type::slash:
-    case lexer::Token_Type::less_than:
-    case lexer::Token_Type::less_than_or_equal:
-    case lexer::Token_Type::greater_than:
-    case lexer::Token_Type::greater_than_or_equal:
-    case lexer::Token_Type::logical_and:
-    case lexer::Token_Type::logical_or:
-    case lexer::Token_Type::equals:
-    case lexer::Token_Type::not_equals:
+    case lexing::token_type::plus:
+    case lexing::token_type::minus:
+    case lexing::token_type::asterisk:
+    case lexing::token_type::slash:
+    case lexing::token_type::less_than:
+    case lexing::token_type::less_than_or_equal:
+    case lexing::token_type::greater_than:
+    case lexing::token_type::greater_than_or_equal:
+    case lexing::token_type::logical_and:
+    case lexing::token_type::logical_or:
+    case lexing::token_type::equals:
+    case lexing::token_type::not_equals:
       return parse_node{ item, { left, expression(lbp(item.type)) } };
-    case lexer::Token_Type::bang:
+    case lexing::token_type::bang:
       return parse_node{ item, { left } };
-    case lexer::Token_Type::left_paren: {
+    case lexing::token_type::left_paren: {
       auto result = left;
-      result.children.emplace_back(
-        item, list(false, lexer::Token_Type::left_paren, lexer::Token_Type::right_paren, lexer::Token_Type::comma).children);
+      result.children.emplace_back(item,
+        list(false, lexing::token_type::left_paren, lexing::token_type::right_paren, lexing::token_type::comma)
+          .children);
       return result;
     }
-    case lexer::Token_Type::left_brace: {
+    case lexing::token_type::left_brace: {
       auto result = left;
       result.children.push_back(parse_node{ item, { expression() } });
-      if (const auto match_result = consume_match(lexer::Token_Type::right_brace); match_result.is_error()) {
+      if (auto match_result = consume_match(lexing::token_type::right_brace); match_result.is_error()) {
         return match_result;
       }
       return result;
     }
-    case lexer::Token_Type::caret:
+    case lexing::token_type::caret:
       // caret, as an infix, is right-associative, so we decrease its
       // precedence slightly
       // https://github.com/munificent/bantam/blob/8b0b06a1543b7d9e84ba2bb8d916979459971b2d/src/com/stuffwithstuff/bantam/parselets/BinaryOperatorParselet.java#L20-L27
@@ -190,7 +185,7 @@ struct Parser
     }
   }
 
-  enum struct Precedence {
+  enum struct precedence {
     none = 0,
     // comma = 1,
     // assignment = 2,
@@ -209,61 +204,86 @@ struct Parser
 
   // this is for infix precedence values
   // lbp = left binding power
-  [[nodiscard]] static constexpr int lbp(const lexer::Token_Type type) noexcept
+  [[nodiscard]] static constexpr int lbp(const lexing::token_type type) noexcept
   {
-    const auto precedence = [type]() -> Precedence {
+    return static_cast<int>([type]() {
       switch (type) {
-      case lexer::Token_Type::plus:
-      case lexer::Token_Type::minus:
-        return Precedence::sum;
-      case lexer::Token_Type::asterisk:
-      case lexer::Token_Type::slash:
-        return Precedence::product;
-      case lexer::Token_Type::caret:
-        return Precedence::exponent;
-      case lexer::Token_Type::bang:
-        return Precedence::postfix;
-      case lexer::Token_Type::left_brace:
-      case lexer::Token_Type::left_paren:
-        return Precedence::call;
-      case lexer::Token_Type::right_paren:
-        return Precedence::none;// right_paren will be parsed but not consumed when matching
-      case lexer::Token_Type::end_of_file:
-        return Precedence::none;
-      case lexer::Token_Type::keyword:
-        return Precedence::keyword;
-      case lexer::Token_Type::less_than_or_equal:
-      case lexer::Token_Type::less_than:
-      case lexer::Token_Type::greater_than_or_equal:
-      case lexer::Token_Type::greater_than:
-        return Precedence::relational_comparison;
-      case lexer::Token_Type::logical_and:
-        return Precedence::logical_and;
-      case lexer::Token_Type::logical_or:
-        return Precedence::logical_or;
-      case lexer::Token_Type::equals:
-      case lexer::Token_Type::not_equals:
-        return Precedence::equality_comparison;
-      default:
-        return Precedence::none;
-        //        throw std::runtime_error(fmt::format("Unhandled value lbp {}", static_cast<int>(type)));
-      }
-    }();
+      case lexing::token_type::plus:
+      case lexing::token_type::minus:
+        return precedence::sum;
 
-    return static_cast<int>(precedence);
+      case lexing::token_type::asterisk:
+      case lexing::token_type::slash:
+        return precedence::product;
+
+      case lexing::token_type::caret:
+        return precedence::exponent;
+
+      case lexing::token_type::bang:
+        return precedence::postfix;
+
+      case lexing::token_type::left_brace:
+      case lexing::token_type::left_paren:
+        return precedence::call;
+
+      case lexing::token_type::keyword:
+        return precedence::keyword;
+
+      case lexing::token_type::less_than_or_equal:
+      case lexing::token_type::less_than:
+      case lexing::token_type::greater_than_or_equal:
+      case lexing::token_type::greater_than:
+        return precedence::relational_comparison;
+
+      case lexing::token_type::logical_and:
+        return precedence::logical_and;
+
+      case lexing::token_type::logical_or:
+        return precedence::logical_or;
+
+      case lexing::token_type::equals:
+      case lexing::token_type::not_equals:
+        return precedence::equality_comparison;
+
+        // all of the remaining do not have a left binding power
+        // we are leaving them here as explicit cases so that we know if we add
+        // a new token_type that should have an LBP but forget to add it
+      case lexing::token_type::right_paren:// right_paren will be parsed but not consumed when matching
+      case lexing::token_type::end_of_file:
+      case lexing::token_type::unknown:
+      case lexing::token_type::identifier:
+      case lexing::token_type::number:
+      case lexing::token_type::increment:
+      case lexing::token_type::decrement:
+      case lexing::token_type::right_brace:
+      case lexing::token_type::left_bracket:
+      case lexing::token_type::right_bracket:
+      case lexing::token_type::comma:
+      case lexing::token_type::assign:
+      case lexing::token_type::percent:
+      case lexing::token_type::tilde:
+      case lexing::token_type::question:
+      case lexing::token_type::colon:
+      case lexing::token_type::string:
+      case lexing::token_type::whitespace:
+      case lexing::token_type::semicolon:
+        return precedence::none;
+      }
+      return precedence::none;
+    }());
   }
 
   [[nodiscard]] parse_node statement()
   {
-    if (peek(lexer::Token_Type::left_brace)) { return compound_statement(); }
+    if (peek(lexing::token_type::left_brace)) { return compound_statement(); }
     auto result = expression();
 
-    if (result.item.type == lexer::Token_Type::left_brace
-        || (!result.children.empty() && result.children.back().item.type == lexer::Token_Type::left_brace)) {
+    if (result.item.type == lexing::token_type::left_brace
+        || (!result.children.empty() && result.children.back().item.type == lexing::token_type::left_brace)) {
       // our last matched item was a compound statement of some sort, so we won't require a closing semicolon
     } else {
-      if (const auto match_result = consume_match(lexer::Token_Type::semicolon); match_result.is_error()) {
-        return match_result;
+      if (auto match_result = consume_match(lexing::token_type::semicolon); match_result.is_error()) {
+        result.children.push_back(match_result);
       }
     }
     return result;
@@ -271,50 +291,51 @@ struct Parser
 
   [[nodiscard]] parse_node compound_statement()
   {
-    auto result = consume_match(lexer::Token_Type::left_brace);
+    auto result = consume_match(lexing::token_type::left_brace);
     if (result.is_error()) { return result; }
-    while (!peek(lexer::Token_Type::right_brace)) { result.children.emplace_back(statement()); }
-    // we peeked, it'll consume_match
-    [[maybe_unused]] const auto right_brace = consume_match(lexer::Token_Type::right_brace);
+
+    while (!peek(lexing::token_type::right_brace) && next_token_is_valid()) { result.children.emplace_back(statement()); }
+
+    if (auto right_brace = consume_match(lexing::token_type::right_brace); right_brace.is_error()) {
+      result.children.push_back(right_brace);
+    }
     return result;
   }
 
   [[nodiscard]] parse_node expression(const int rbp = 0)
   {
-    // parse prefix token
-    const auto prefix = token;
-    token = next();
+    // parse prefix next_lexed_token
+    const auto prefix = next_lexed_token;
+    next_lexed_token = next();
     auto left = null_denotation(prefix);
 
     // parse infix / postfix tokens
-    while (rbp < lbp(token.type)) {
-      const auto t = token;
-      token = next();
+    while (rbp < lbp(next_lexed_token.type)) {
+      const auto t = next_lexed_token;
+      next_lexed_token = next();
       left = left_denotation(t, left);
     }
 
     return left;
   }
 
-  [[nodiscard]] constexpr lexer::lex_item next() const noexcept { return next_token(token.remainder); }
+  [[nodiscard]] constexpr lexing::lex_item next() const noexcept { return next_token(next_lexed_token.remainder); }
 
-  static constexpr lexer::lex_item next_token(std::string_view v) noexcept
+  [[nodiscard]] static constexpr lexing::lex_item next_token(std::string_view v) noexcept
   {
     while (true) {
-      if (const auto item = lexer::lexer(v); item) {
-        if (item->type != lexer::Token_Type::whitespace) {
+      if (const auto item = lexing::lexer(v); item) {
+        if (item->type != lexing::token_type::whitespace) {
           return *item;
         } else {
           v = item->remainder;
         }
       } else {
-        return lexer::lex_item{ lexer::Token_Type::unknown, v, v };
+        return lexing::lex_item{ lexing::token_type::unknown, v, v };
       }
     }
   }
-
-
 };
-}// namespace parser_test
+}// namespace thing::parsing
 
 #endif

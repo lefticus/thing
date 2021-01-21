@@ -9,11 +9,13 @@
 namespace parser_test {
 
 template<typename T>
-constexpr bool BiDirIterator = std::is_convertible_v<typename std::iterator_traits<T>::iterator_category, std::bidirectional_iterator_tag>;
+constexpr bool BiDirIterator =
+  std::is_convertible_v<typename std::iterator_traits<T>::iterator_category, std::bidirectional_iterator_tag>;
 
 
 template<typename Iterator, typename UnaryPredicate>
-[[nodiscard]] constexpr auto count_if_to_last(Iterator begin, Iterator end, UnaryPredicate predicate) requires BiDirIterator<Iterator>
+[[nodiscard]] constexpr auto
+  count_if_to_last(Iterator begin, Iterator end, UnaryPredicate predicate) requires BiDirIterator<Iterator>
 {
   std::reverse_iterator rbegin{ end };
   const std::reverse_iterator rend{ begin };

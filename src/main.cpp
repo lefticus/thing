@@ -13,7 +13,7 @@
 
 
 static constexpr auto USAGE =
-  R"(Parser Test.
+  R"(parser Test.
 
     Usage:
           parser_test [options]
@@ -98,7 +98,7 @@ auto run_summation()
   }
 }
 
-void dump(std::string_view input, const thing::Parser::parse_node &node, const std::size_t indent = 0)
+void dump(std::string_view input, const thing::parsing::parse_node &node, const std::size_t indent = 0)
 {
   if (node.is_error()) {
     const auto parsed = node.item;
@@ -114,11 +114,11 @@ void dump(std::string_view input, const thing::Parser::parse_node &node, const s
     std::cout << errored_line;
     std::cout << fmt::format("\n{:>{}}\n", '|', column);
 
-    using error_type = thing::Parser::parse_node::error_type;
+    using error_type = thing::parsing::parse_node::error_type;
     switch (node.error) {
     case error_type::wrong_token_type:
-      std::cout << fmt::format("{:>{}}'{}' expected\n", "", column-1, thing::lexer::to_string(node.expected_token));
-//      std::cout << "Expected token of type: " << static_cast<int>(node.expected_token) << '\n';
+      std::cout << fmt::format("{:>{}}'{}' expected\n", "", column - 1, thing::lexing::to_string(node.expected_token));
+      //      std::cout << "Expected next_lexed_token of type: " << static_cast<int>(node.expected_token) << '\n';
       break;
     case error_type::unexpected_infix_token:
       std::cout << "Unexpected infix operation: " << node.item.match << '\n';
@@ -129,18 +129,15 @@ void dump(std::string_view input, const thing::Parser::parse_node &node, const s
     case error_type::no_error:
       break;
     }
-
   }
   fmt::print("{}'{}'\n", std::string(indent, ' '), node.item.match);
 
-  for (const auto &child : node.children) {
-    dump(input, child, indent + 2);
-  }
+  for (const auto &child : node.children) { dump(input, child, indent + 2); }
 }
 
 void parse_n_dump(std::string_view input)
 {
-  thing::Parser parser;
+  thing::parsing::parser parser;
   dump(input, parser.parse(input));
 }
 
@@ -149,7 +146,7 @@ int main(int argc, const char **argv)
   const auto args = docopt::docopt(USAGE,
     { std::next(argv), std::next(argv, argc) },
     true,// show help if requested
-    "Parser Test 0.0");// version string
+    "parser Test 0.0");// version string
 
   //  for (auto const &arg : args) {
   //    fmt::print("Command line arg: '{}': '{}'\n", arg.first, arg.second);
@@ -192,6 +189,13 @@ auto func(auto x, auto y) {
 */
 
   parse_n_dump("   func(x,y\n\n,x==15");
-
+  parse_n_dump(
+    R"(
+if (x) {
+  call_func();
+else {
+  call_other_func();
+}
+)");
   run_summation();
 }
