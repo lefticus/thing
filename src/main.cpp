@@ -10,7 +10,7 @@
 #include <thing.hpp>
 #include <parser.hpp>
 #include <algorithms.hpp>
-
+#include <ast.hpp>
 
 static constexpr auto USAGE =
   R"(parser Test.
@@ -102,7 +102,7 @@ void dump(std::string_view input, const thing::parsing::parse_node &node, const 
 {
   if (node.is_error()) {
     const auto parsed = node.item;
-    const auto [line, location] = parser_test::count_to_last(input.begin(), parsed.remainder.begin(), '\n');
+    const auto [line, location] = thing::count_to_last(input.begin(), parsed.remainder.begin(), '\n');
     // skip last matched newline, and find next newline after
     const auto errored_line =
       std::string_view{ std::next(location), std::find(std::next(location), parsed.remainder.end(), '\n') };
@@ -135,10 +135,12 @@ void dump(std::string_view input, const thing::parsing::parse_node &node, const 
   for (const auto &child : node.children) { dump(input, child, indent + 2); }
 }
 
-void parse_n_dump(std::string_view input)
+auto parse_n_dump(std::string_view input)
 {
   thing::parsing::parser parser;
-  dump(input, parser.parse(input));
+  auto parse_output = parser.parse(input);
+  dump(input, parse_output);
+  return parse_output;
 }
 
 int main(int argc, const char **argv)
@@ -197,5 +199,18 @@ else {
   call_other_func();
 }
 )");
+
+
   run_summation();
+
+  constexpr std::string_view function{
+    R"(
+auto func(auto x, auto y, auto z) {
+  if (x > y) {
+    x + y;
+  }
+}
+)"};
+
+  const auto ast = thing::ast::build_function_ast(parse_n_dump(function));
 }

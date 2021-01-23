@@ -9,38 +9,149 @@
 
 namespace thing::ast {
 struct variable_declaration;
-struct function_declaration;
+struct variable_definition;
+struct function_definition;
 struct function_call;
 struct prefix_operator;
 struct infix_operator;
 
 struct if_statement;
 struct for_statement;
+struct while_statement;
+
+struct parse_error
+{
+  std::string_view error_description;
+  std::reference_wrapper<const parsing::parse_node> error_location;
+};
+
 struct compound_statement;
 struct literal_value
 {
   lexing::lex_item value;
-} struct identifier
+};
+
+struct identifier
 {
   lexing::lex_item id;
 };
 
 using expression = std::variant<function_call, prefix_operator, infix_operator, literal_value, identifier>;
-using statement = std::variant<variable_declaration, expression, if_statement, for_statement, compound_statement>;
-using init_statement = std::variant<expression, variable_declaration>;
+
+struct function_call
+{
+  std::unique_ptr<expression> function;
+  std::vector<expression> parameters;
+};
+
+struct parse_error;
 
 struct prefix_operator
 {
   lexing::lex_item op;
-  expression operand;
+  std::unique_ptr<expression> operand;
 };
 
 struct infix_operator
 {
-  expression lhs_operand;
+  std::unique_ptr<expression> lhs_operand;
   lexing::lex_item op;
-  expression rhs_operand;
+  std::unique_ptr<expression> rhs_operand;
 };
+
+template<typename... Types> struct merge_types
+{
+  using type = std::variant<Types...>;
+};
+
+template<typename... RHS> struct merge_types<parse_error, std::variant<RHS...>>
+{
+  using type = std::variant<parse_error, RHS...>;
+};
+
+template<typename... LHS, typename... RHS> struct merge_types<std::variant<LHS...>, std::variant<RHS...>>
+{
+  using type = std::variant<LHS..., RHS...>;
+};
+
+template<typename... LHS, typename... RHS>
+struct merge_types<std::variant<parse_error, LHS...>, std::variant<parse_error, RHS...>>
+{
+  using type = std::variant<parse_error, LHS..., RHS...>;
+};
+
+template<typename... LHS, typename... RHS> struct merge_types<std::variant<LHS...>, std::variant<parse_error, RHS...>>
+{
+  using type = std::variant<parse_error, LHS..., RHS...>;
+};
+
+template<typename... LHS, typename... RHS> struct merge_types<std::variant<parse_error, LHS...>, std::variant<RHS...>>
+{
+  using type = std::variant<parse_error, LHS..., RHS...>;
+};
+
+template<typename... LHS, typename... RHS> struct merge_types<std::variant<parse_error, LHS...>, RHS...>
+{
+  using type = std::variant<parse_error, LHS..., RHS...>;
+};
+
+template<typename... LHS, typename... RHS> struct merge_types<std::variant<LHS...>, RHS...>
+{
+  using type = std::variant<LHS..., RHS...>;
+};
+
+
+template<typename... Types> using merge_types_t = typename merge_types<Types...>::type;
+
+template<typename Func> struct parser
+{
+  Func func;
+  [[nodiscard]] constexpr auto parse(const parsing::parse_node &node) const { return func(node); }
+};
+template<typename Func> parser(Func f) -> parser<Func>;
+
+template<typename RetType, typename Value> auto return_current_value(Value &&value) -> RetType
+{
+  return std::visit(
+    []<typename Inner>(Inner &&inner) -> RetType { return std::forward<Inner>(inner); }, std::forward<Value>(value));
+}
+
+template<typename Value> void visit_non_error_value(Value &&value, auto &&visitor)
+{
+  std::visit(
+    [&]<typename Inner>(Inner &&inner) -> void {
+      if constexpr (!std::is_same_v<Inner, parse_error>) { visitor(inner); }
+    },
+    std::forward<Value>(value));
+}
+
+template<typename First, typename... Remainder>
+parse_error return_first_error(const First &first, const Remainder &...remainder)
+{
+  if constexpr (std::is_same_v<parse_error, std::decay_t<First>>) {
+    return first;
+  } else {
+    return return_first_error(remainder...);
+  }
+}
+
+template<typename ReturnType, typename... Value> ReturnType visit_non_error_values(auto &&visitor, Value &&...value)
+{
+  return std::visit(
+    [&]<typename... Inner>(Inner && ...inner)->ReturnType {
+      if constexpr (!(std::is_same_v<std::decay_t<Inner>, parse_error> || ...)) {
+        return visitor(std::forward<Inner>(inner)...);
+      } else {
+        return return_first_error(inner...);
+      }
+    },
+    std::forward<Value>(value)...);
+}
+
+
+using statement =
+  merge_types_t<expression, variable_definition, if_statement, for_statement, while_statement, compound_statement>;
+using init_statement = merge_types_t<expression, variable_definition>;
 
 struct compound_statement
 {
@@ -49,49 +160,206 @@ struct compound_statement
 
 struct if_statement
 {
-  init_statement init;
+  std::unique_ptr<init_statement> init;
   expression condition;
-  statement true_case;
-  statement false_case;
+  std::unique_ptr<statement> true_case;
+  std::unique_ptr<statement> false_case;
 };
 
 struct for_statement
 {
-  init_statement init;
+  std::unique_ptr<init_statement> init;
   expression condition;
   expression loop_expression;
-  statement body;
+  std::unique_ptr<statement> body;
 };
 
 struct while_statement
 {
   expression condition;
-  statement body;
+  std::unique_ptr<statement> body;
 };
 
-struct function_declaration
+struct function_definition
 {
   lexing::lex_item name;
   std::vector<variable_declaration> parameters;
-  statement body;
+  std::unique_ptr<statement> body;
 };
 
 struct variable_declaration
 {
   lexing::lex_item name;
+};
+
+struct variable_definition
+{
+  lexing::lex_item name;
   expression initial_value;
 };
 
-struct function_call
-{
-  expression function;
-  std::vector<expression> parameters;
-};
 
-function_declaration build_function_ast(const parsing::parse_node &node)
+[[nodiscard]] merge_types_t<parse_error, variable_declaration> build_variable_decl(
+  [[maybe_unused]] const parsing::parse_node &node)
 {
-  //    if (node.)
-  return function_declaration{};
+  if (node.item.type != lexing::token_type::keyword || node.item.match != "auto" || node.children.size() != 1
+      || node.children[0].item.type != lexing::token_type::identifier || !node.children[0].children.empty()) {
+    return parse_error{ "Expected variable declaration in the form of `auto <identifier>`", node };
+  }
+
+  return variable_declaration{ node.item };
+}
+
+[[nodiscard]] constexpr bool is_parse_error(const auto &value) noexcept
+{
+  return std::holds_alternative<parse_error>(value);
+}
+
+[[nodiscard]] merge_types_t<parse_error, std::vector<variable_declaration>> build_variable_list(
+  const parsing::parse_node &node)
+{
+  if (node.item.type != lexing::token_type::left_paren) { return parse_error{ "expected parenthesized list", node }; }
+
+  std::vector<variable_declaration> retval;
+  for (const auto &child : node.children) {
+    auto decl = build_variable_decl(child);
+    if (is_parse_error(decl)) { return std::get<parse_error>(decl); }
+    retval.push_back(std::get<variable_declaration>(decl));
+  }
+
+  return retval;
+}
+
+
+template<typename LHS, typename RHS> auto operator|(const parser<LHS> &lhs, const parser<RHS> &rhs)
+{
+  using return_type = merge_types_t<decltype(lhs.parse(std::declval<parsing::parse_node>())),
+    decltype(rhs.parse(std::declval<parsing::parse_node>()))>;
+
+  auto combined = [lhs, rhs](const parsing::parse_node &node) -> return_type {
+    auto lhs_result = lhs.parse(node);
+    if (is_parse_error(lhs_result)) {
+      auto rhs_result = rhs.parse(node);
+      if (is_parse_error(rhs_result)) {
+        return parse_error{ "Unexpected expression", node };
+      } else {
+        return return_current_value<return_type>(std::move(rhs_result));
+      }
+    } else {
+      return return_current_value<return_type>(std::move(lhs_result));
+    }
+  };
+
+  return parser{ combined };
+}
+
+[[nodiscard]] merge_types_t<parse_error, variable_definition> build_variable_definition(const parsing::parse_node &);
+[[nodiscard]] merge_types_t<parse_error, expression> build_expression(const parsing::parse_node &);
+[[nodiscard]] merge_types_t<parse_error, if_statement> build_if_statement(const parsing::parse_node &);
+[[nodiscard]] merge_types_t<parse_error, for_statement> build_for_statement(const parsing::parse_node &);
+[[nodiscard]] merge_types_t<parse_error, while_statement> build_while_statement(const parsing::parse_node &);
+[[nodiscard]] merge_types_t<parse_error, compound_statement> build_compound_statement(const parsing::parse_node &);
+
+[[nodiscard]] merge_types_t<parse_error, variable_definition> build_variable_definition(const parsing::parse_node &node)
+{
+  if (node.item.type == lexing::token_type::keyword && node.item.match == "auto" && node.children.size() == 1
+      && node.children[0].item.type == lexing::token_type::identifier && node.children[0].children.size() == 1
+      && node.children[0].children[0].item.type == lexing::token_type::left_brace
+      && node.children[0].children[0].children.size() == 1) {
+    const auto name = node.children[0].item;
+    auto initial_expression = build_expression(node.children[0].children[0].children[0]);
+    return visit_non_error_values<std::variant<parse_error, variable_definition>>(
+      [&name](auto &&initial) {
+        return variable_definition{ name, std::move(initial) };
+      },
+      initial_expression);
+  } else {
+    return parse_error{ "Expected variable definition in the form of `auto <identifier> {<initial value expression>};",
+      node };
+  }
+}
+
+[[nodiscard]] merge_types_t<parse_error, function_call> build_function_call(const parsing::parse_node &node) {
+  return parse_error{"Function call parsing not yet implemented", node};
+}
+[[nodiscard]] merge_types_t<parse_error, prefix_operator> build_prefix_operator(const parsing::parse_node &node)
+{
+  return parse_error{ "Prefix operator parsing not yet implemented", node };
+}
+[[nodiscard]] merge_types_t<parse_error, infix_operator> build_infix_operator(const parsing::parse_node &node)
+{
+  return parse_error{ "Infix operator parsing not yet implemented", node };
+}
+[[nodiscard]] merge_types_t<parse_error, literal_value> build_literal_value(const parsing::parse_node &node)
+{
+  return parse_error{ "Literal value parsing not yet implemented", node };
+}
+[[nodiscard]] merge_types_t<parse_error, identifier> build_identifier(const parsing::parse_node &node)
+{
+  return parse_error{ "Identifier parsing not yet implemented", node };
+}
+[[nodiscard]] merge_types_t<parse_error, while_statement> build_while_statement(const parsing::parse_node &node)
+{
+  return parse_error{ "While statement parsing not yet implemented", node };
+}
+[[nodiscard]] merge_types_t<parse_error, for_statement> build_for_statement(const parsing::parse_node &node)
+{
+  return parse_error{ "For statement parsing not yet implemented", node };
+}
+[[nodiscard]] merge_types_t<parse_error, if_statement> build_if_statement(const parsing::parse_node &node)
+{
+  return parse_error{ "If statement parsing not yet implemented", node };
+}
+
+[[nodiscard]] merge_types_t<parse_error, expression> build_expression(const parsing::parse_node &node)
+{
+  return (parser{ build_function_call} | parser{ build_prefix_operator } | parser{ build_infix_operator } | parser{ build_literal_value }
+          | parser{ build_identifier}).parse(node);
+}
+
+[[nodiscard]] merge_types_t<parse_error, statement> build_statement(const parsing::parse_node &node)
+{
+  return (parser{ build_expression } | parser{ build_variable_definition } | parser{ build_if_statement }
+          | parser{ build_for_statement } | parser{ build_while_statement } | parser{ build_compound_statement })
+    .parse(node);
+}
+
+[[nodiscard]] merge_types_t<parse_error, compound_statement> build_compound_statement(const parsing::parse_node &node)
+{
+  if (node.item.type != lexing::token_type::left_brace) {
+    return parse_error{ "Expected compound statement syntax: `{ /* list of statements */ }`", node };
+  }
+
+  std::vector<statement> return_value;
+
+  for (const auto &child : node.children) {
+    if (auto s = build_statement(child); !is_parse_error(s)) {
+      visit_non_error_value(std::move(s), [&](auto &&value) { return_value.push_back(std::move(value)); });
+    } else {
+      return std::get<parse_error>(std::move(s));
+    }
+  }
+
+  return compound_statement{ std::move(return_value) };
+}
+
+[[nodiscard]] merge_types_t<parse_error, function_definition> build_function_ast(const parsing::parse_node &node)
+{
+  if (!(node.item.type == lexing::token_type::keyword && node.item.match == "auto" && node.children.size() == 1
+        && node.children.front().item.type == lexing::token_type::identifier)) {
+    return parse_error{
+      "Expected function definition syntax: `auto <function_name> (<parameter list...>) <compound_statement>", node
+    };
+  }
+
+  auto parameter_list = build_variable_list(node.children[0].children[0]);
+  auto function_body = build_compound_statement(node.children[0].children[1]);
+
+  //  const auto retval = function_definition{
+  //    node.children[0].item,
+  //  };
+
+  return function_definition{};
 }
 }// namespace thing::ast
 

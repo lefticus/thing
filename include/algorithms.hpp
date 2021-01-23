@@ -6,7 +6,15 @@
 #include <utility>
 #include <string_view>
 
-namespace parser_test {
+namespace thing {
+
+// helper type for the visitor #4
+template<class... Ts> struct visitor : Ts...
+{
+  using Ts::operator()...;
+};
+// explicit deduction guide (not needed as of C++20)
+template<class... Ts> visitor(Ts...) -> visitor<Ts...>;
 
 template<typename T>
 constexpr bool BiDirIterator =
