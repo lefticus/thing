@@ -26,13 +26,29 @@
 namespace thing::parsing {
 
 
-struct parser
+template<template<class> class Container_Type> struct basic_parser
 {
+
+  using parse_node = basic_parse_node<Container_Type>;
+
+  using allocator_type = typename parse_node::allocator_type;
+
+  allocator_type alloc;
 
   lexing::lex_item next_lexed_token;
 
+  constexpr explicit basic_parser(allocator_type alloc_) : alloc{ alloc_ } {}
 
-  auto parse(std::string_view v)
+  constexpr basic_parser() : basic_parser(allocator_type{}) {}
+  constexpr basic_parser(const basic_parser &, allocator_type alloc_ = {}) : alloc(alloc_) {}
+  constexpr basic_parser(basic_parser &&) noexcept = default;
+  constexpr basic_parser(basic_parser &&other, allocator_type alloc_) : next_lexed_token{other.next_lexed_token}, alloc(alloc_) {}
+  constexpr basic_parser &operator=(const basic_parser &rhs)= default;
+  constexpr basic_parser &operator=(basic_parser &&rhs) noexcept = default;
+  constexpr ~basic_parser() = default;
+
+
+  [[nodiscard]] constexpr auto parse(std::string_view v)
   {
     next_lexed_token = next_token(v);
     return expression();
@@ -43,7 +59,8 @@ struct parser
     return next_lexed_token.type == type && (value.empty() || next_lexed_token.match == value);
   }
 
-  [[nodiscard]] constexpr bool next_token_is_valid() const noexcept {
+  [[nodiscard]] constexpr bool next_token_is_valid() const noexcept
+  {
     switch (next_lexed_token.type) {
     case lexing::token_type::end_of_file:
     case lexing::token_type::unknown:
@@ -54,7 +71,7 @@ struct parser
   }
 
   // if a match is not possible, an error node is returned.
-  [[nodiscard]] parse_node consume_match(const lexing::token_type type)
+  [[nodiscard]] constexpr parse_node consume_match(const lexing::token_type type)
   {
     if (next_lexed_token.type != type) {
       return parse_node{ std::exchange(next_lexed_token, next()), parse_node::error_type::wrong_token_type, type };
@@ -62,7 +79,7 @@ struct parser
     return parse_node{ std::exchange(next_lexed_token, next()), {} };
   }
 
-  [[nodiscard]] parse_node list(const bool consume_opener,
+  [[nodiscard]] constexpr parse_node list(const bool consume_opener,
     const lexing::token_type opener,
     const lexing::token_type closer,
     const lexing::token_type delimiter)
@@ -93,7 +110,7 @@ struct parser
     return result;
   }
 
-  [[nodiscard]] parse_node control_block(const lexing::lex_item &item)
+  [[nodiscard]] constexpr parse_node control_block(const lexing::lex_item &item)
   {
     parse_node result{ item,
       { list(true, lexing::token_type::left_paren, lexing::token_type::right_paren, lexing::token_type::semicolon),
@@ -105,7 +122,7 @@ struct parser
   }
 
   // prefix nodes
-  [[nodiscard]] parse_node null_denotation(const lexing::lex_item &item)
+  [[nodiscard]] constexpr parse_node null_denotation(const lexing::lex_item &item)
   {
     constexpr auto prefix_precedence = static_cast<int>(precedence::prefix);
 
@@ -139,7 +156,7 @@ struct parser
   }
 
   // infix processing
-  [[nodiscard]] parse_node left_denotation(const lexing::lex_item &item, const parse_node &left)
+  [[nodiscard]] constexpr parse_node left_denotation(const lexing::lex_item &item, const parse_node &left)
   {
     switch (item.type) {
     case lexing::token_type::plus:
@@ -273,7 +290,7 @@ struct parser
     }());
   }
 
-  [[nodiscard]] parse_node statement()
+  [[nodiscard]] constexpr parse_node statement()
   {
     if (peek(lexing::token_type::left_brace)) { return compound_statement(); }
     auto result = expression();
@@ -289,12 +306,14 @@ struct parser
     return result;
   }
 
-  [[nodiscard]] parse_node compound_statement()
+  [[nodiscard]] constexpr parse_node compound_statement()
   {
     auto result = consume_match(lexing::token_type::left_brace);
     if (result.is_error()) { return result; }
 
-    while (!peek(lexing::token_type::right_brace) && next_token_is_valid()) { result.children.emplace_back(statement()); }
+    while (!peek(lexing::token_type::right_brace) && next_token_is_valid()) {
+      result.children.emplace_back(statement());
+    }
 
     if (auto right_brace = consume_match(lexing::token_type::right_brace); right_brace.is_error()) {
       result.children.push_back(right_brace);
@@ -302,7 +321,7 @@ struct parser
     return result;
   }
 
-  [[nodiscard]] parse_node expression(const int rbp = 0)
+  [[nodiscard]] constexpr parse_node expression(const int rbp = 0)
   {
     // parse prefix next_lexed_token
     const auto prefix = next_lexed_token;

@@ -98,7 +98,11 @@ auto run_summation()
   }
 }
 
-void dump(std::string_view input, const thing::parsing::parse_node &node, const std::size_t indent = 0)
+using ast_builder = thing::ast::basic_ast_builder<std::vector>;
+using parser = thing::parsing::basic_parser<std::vector>;
+using parse_node = parser::parse_node;
+
+void dump(std::string_view input, const parse_node &node, const std::size_t indent = 0)
 {
   if (node.is_error()) {
     const auto parsed = node.item;
@@ -114,7 +118,7 @@ void dump(std::string_view input, const thing::parsing::parse_node &node, const 
     std::cout << errored_line;
     std::cout << fmt::format("\n{:>{}}\n", '|', column);
 
-    using error_type = thing::parsing::parse_node::error_type;
+    using error_type = parse_node::error_type;
     switch (node.error) {
     case error_type::wrong_token_type:
       std::cout << fmt::format("{:>{}}'{}' expected\n", "", column - 1, thing::lexing::to_string(node.expected_token));
@@ -135,10 +139,11 @@ void dump(std::string_view input, const thing::parsing::parse_node &node, const 
   for (const auto &child : node.children) { dump(input, child, indent + 2); }
 }
 
+
 auto parse_n_dump(std::string_view input)
 {
-  thing::parsing::parser parser;
-  auto parse_output = parser.parse(input);
+  parser p;
+  auto parse_output = p.parse(input);
   dump(input, parse_output);
   return parse_output;
 }
@@ -212,5 +217,6 @@ auto func(auto x, auto y, auto z) {
 }
 )"};
 
-  const auto ast = thing::ast::build_function_ast(parse_n_dump(function));
+
+  const auto ast = ast_builder::build_function_ast(parse_n_dump(function), {});
 }
